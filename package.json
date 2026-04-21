@@ -1,6 +1,6 @@
 {
   "name": "flow-multi-account",
-  "version": "1.0.1",
+  "version": "1.4.0",
   "description": "Flow 多账号管理器（桌面应用 + 独立会话隔离）",
   "author": "Flow Team",
   "private": true,
