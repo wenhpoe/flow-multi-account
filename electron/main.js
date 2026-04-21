@@ -35,6 +35,23 @@ function setupAutoUpdate(mainWindow) {
 
   autoUpdater.autoDownload = true;
 
+  const logPath = (() => {
+    try {
+      return path.join(app.getPath('userData'), 'auto-update.log');
+    } catch {
+      return null;
+    }
+  })();
+
+  const log = (line) => {
+    const msg = `[${new Date().toISOString()}] ${String(line || '').trim()}\n`;
+    try {
+      if (logPath) fs.appendFileSync(logPath, msg, 'utf8');
+    } catch {
+      // ignore
+    }
+  };
+
   const sendStatus = (status) => {
     try {
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -45,17 +62,66 @@ function setupAutoUpdate(mainWindow) {
     }
   };
 
-  autoUpdater.on('checking-for-update', () => sendStatus({ state: 'checking' }));
-  autoUpdater.on('update-available', (info) =>
-    sendStatus({ state: 'available', version: info?.version || null, releaseName: info?.releaseName || null }),
-  );
-  autoUpdater.on('update-not-available', () => sendStatus({ state: 'none' }));
-  autoUpdater.on('download-progress', (p) =>
-    sendStatus({ state: 'downloading', percent: p?.percent ?? null, bytesPerSecond: p?.bytesPerSecond ?? null }),
-  );
-  autoUpdater.on('error', (err) => sendStatus({ state: 'error', error: err?.message || String(err) }));
+  let hasShownAvailable = false;
+  let hasShownError = false;
+  let lastProgressPct = null;
+
+  autoUpdater.on('checking-for-update', () => {
+    log('checking-for-update');
+    sendStatus({ state: 'checking' });
+  });
+  autoUpdater.on('update-available', async (info) => {
+    const v = info?.version || null;
+    log(`update-available version=${v || ''}`);
+    sendStatus({ state: 'available', version: v, releaseName: info?.releaseName || null });
+
+    if (hasShownAvailable) return;
+    hasShownAvailable = true;
+    try {
+      await dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: '发现新版本',
+        message: `发现新版本 ${v || ''}，正在后台下载…`,
+        buttons: ['知道了'],
+        defaultId: 0,
+        noLink: true,
+      });
+    } catch {
+      // ignore
+    }
+  });
+  autoUpdater.on('update-not-available', (info) => {
+    const v = info?.version || null;
+    log(`update-not-available version=${v || ''}`);
+    sendStatus({ state: 'none' });
+  });
+  autoUpdater.on('download-progress', (p) => {
+    const pct = typeof p?.percent === 'number' ? Math.max(0, Math.min(100, Math.floor(p.percent))) : null;
+    if (pct != null && pct !== lastProgressPct) {
+      lastProgressPct = pct;
+      log(`download-progress ${pct}%`);
+    }
+    sendStatus({ state: 'downloading', percent: p?.percent ?? null, bytesPerSecond: p?.bytesPerSecond ?? null });
+  });
+  autoUpdater.on('error', async (err) => {
+    const msg = err?.message || String(err);
+    log(`error ${msg}`);
+    sendStatus({ state: 'error', error: msg });
+
+    if (hasShownError) return;
+    hasShownError = true;
+    try {
+      dialog.showErrorBox(
+        '自动更新失败',
+        `自动更新检查/下载失败。\n\n错误信息：${msg}\n\n排查建议：\n- 确认 GitHub Release 不是 Draft/Pre-release\n- 确认 Release 里有 latest.yml（Windows）或 latest-mac.yml + .zip（macOS）\n- macOS 请确保应用已安装到“应用程序”目录后再启动\n\n日志：${logPath || '（不可用）'}`,
+      );
+    } catch {
+      // ignore
+    }
+  });
 
   autoUpdater.on('update-downloaded', async (info) => {
+    log(`update-downloaded version=${info?.version || ''}`);
     sendStatus({ state: 'downloaded', version: info?.version || null });
     try {
       const r = await dialog.showMessageBox(mainWindow, {
@@ -80,6 +146,7 @@ function setupAutoUpdate(mainWindow) {
   });
 
   autoUpdater.checkForUpdates().catch((e) => {
+    log(`checkForUpdates failed: ${e?.message || e}`);
     console.warn(`⚠️ 自动更新检查失败：${e?.message || e}`);
   });
 }
