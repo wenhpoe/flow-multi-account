@@ -1,0 +1,2301 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Flow 多账号管理器</title>
+        <style>
+            :root {
+                /* Eye-friendly paper theme (soft sage, low-contrast highlights) */
+                --paper0: #eef3ea;
+                --paper1: #f3f6ef;
+                --paper2: #f7f9f3;
+                --ink: #1a1c1a;
+                --ink2: rgba(26, 28, 26, 0.72);
+                --ink3: rgba(26, 28, 26, 0.52);
+                --line: rgba(26, 28, 26, 0.14);
+                --line2: rgba(26, 28, 26, 0.26);
+                --accent: #2b6f6a;
+                --accent2: #7aa87a;
+                --good: #2f7d5c;
+                --warn: #8a641b;
+                --bad: #a13a38;
+                --info: #2a63b7;
+                --shadow: 0 20px 52px rgba(18, 22, 18, 0.18);
+                --shadow2: 0 10px 22px rgba(18, 22, 18, 0.12);
+                --r: 18px;
+                --r2: 14px;
+            }
+
+            * {
+                box-sizing: border-box;
+            }
+
+            [hidden] {
+                display: none !important;
+            }
+
+            body {
+                font-family:
+                    ui-sans-serif,
+                    system-ui,
+                    -apple-system,
+                    Segoe UI,
+                    Helvetica,
+                    Arial,
+                    "Apple Color Emoji",
+                    "Segoe UI Emoji";
+                margin: 0;
+                color: var(--ink);
+                background:
+                    radial-gradient(
+                        820px 440px at 12% 10%,
+                        rgba(43, 111, 106, 0.09),
+                        transparent 60%
+                    ),
+                    radial-gradient(
+                        740px 520px at 88% 18%,
+                        rgba(122, 168, 122, 0.09),
+                        transparent 58%
+                    ),
+                    radial-gradient(
+                        900px 720px at 52% 105%,
+                        rgba(138, 100, 27, 0.05),
+                        transparent 55%
+                    ),
+                    linear-gradient(180deg, var(--paper0), var(--paper1));
+                min-height: 100vh;
+            }
+
+            body::before {
+                content: "";
+                position: fixed;
+                inset: 0;
+                pointer-events: none;
+                background:
+                    radial-gradient(
+                        circle at 10% 12%,
+                        rgba(0, 0, 0, 0.05),
+                        transparent 35%
+                    ),
+                    radial-gradient(
+                        circle at 85% 20%,
+                        rgba(0, 0, 0, 0.04),
+                        transparent 40%
+                    ),
+                    radial-gradient(
+                        circle at 45% 80%,
+                        rgba(0, 0, 0, 0.035),
+                        transparent 45%
+                    ),
+                    repeating-linear-gradient(
+                        0deg,
+                        rgba(0, 0, 0, 0.018),
+                        rgba(0, 0, 0, 0.018) 1px,
+                        transparent 1px,
+                        transparent 18px
+                    );
+                opacity: 0.55;
+            }
+
+            .app {
+                display: grid;
+                grid-template-columns: 340px 1fr;
+                gap: 18px;
+                padding: 18px;
+                max-width: 1200px;
+                margin: 0 auto;
+            }
+
+            .overlay {
+                position: fixed;
+                inset: 0;
+                background:
+                    radial-gradient(
+                        760px 520px at 16% 12%,
+                        rgba(43, 111, 106, 0.12),
+                        transparent 60%
+                    ),
+                    radial-gradient(
+                        740px 520px at 88% 18%,
+                        rgba(122, 168, 122, 0.10),
+                        transparent 60%
+                    ),
+                    linear-gradient(180deg, rgba(238, 243, 234, 0.92), rgba(243, 246, 239, 0.96));
+                display: grid;
+                place-items: center;
+                padding: 18px;
+                z-index: 9999;
+            }
+
+            .overlay-card {
+                width: min(760px, 100%);
+                border-radius: 22px;
+                border: 1px solid var(--line);
+                background: linear-gradient(
+                    180deg,
+                    rgba(247, 249, 243, 0.92),
+                    rgba(247, 249, 243, 0.78)
+                );
+                box-shadow: var(--shadow);
+                overflow: hidden;
+                position: relative;
+            }
+
+            .overlay-card::after {
+                content: "";
+                position: absolute;
+                inset: 0;
+                pointer-events: none;
+                background:
+                    radial-gradient(
+                        640px 260px at 10% 0%,
+                        rgba(29, 78, 216, 0.10),
+                        transparent 58%
+                    ),
+                    radial-gradient(
+                        560px 260px at 92% 35%,
+                        rgba(14, 165, 233, 0.08),
+                        transparent 62%
+                    );
+                opacity: 0.55;
+            }
+
+            .overlay-card > * {
+                position: relative;
+                z-index: 1;
+            }
+
+            .overlay-h {
+                padding: 16px 18px 12px;
+                border-bottom: 1px solid var(--line);
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+            }
+
+            .overlay-h h2 {
+                margin: 0;
+                font-size: 16px;
+                letter-spacing: 0.02em;
+                font-family: ui-serif, Georgia, "Times New Roman", Times, serif;
+            }
+
+            .overlay-b {
+                padding: 16px 18px 18px;
+            }
+
+            .grid2 {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 12px;
+            }
+
+            @media (max-width: 760px) {
+                .grid2 {
+                    grid-template-columns: 1fr;
+                }
+            }
+
+            .kv2 {
+                display: grid;
+                grid-template-columns: 110px 1fr;
+                gap: 8px 10px;
+                align-items: center;
+            }
+
+            .kv2 .k {
+                color: var(--ink3);
+                font-size: 12px;
+            }
+
+            .kv2 .v {
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco,
+                    Consolas, "Liberation Mono", "Courier New", monospace;
+                color: var(--ink2);
+                font-size: 12px;
+                word-break: break-all;
+            }
+
+            details.proxy-details {
+                margin: 0;
+            }
+
+            details.proxy-details summary {
+                cursor: pointer;
+                list-style: none;
+                outline: none;
+            }
+
+            details.proxy-details summary::-webkit-details-marker {
+                display: none;
+            }
+
+            .proxy-summary {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .proxy-caret {
+                width: 18px;
+                height: 18px;
+                border-radius: 8px;
+                display: inline-grid;
+                place-items: center;
+                border: 1px solid var(--line);
+                background: rgba(255, 255, 255, 0.45);
+                color: var(--ink3);
+                box-shadow: var(--shadow2);
+                flex: 0 0 auto;
+            }
+
+            details.proxy-details[open] .proxy-caret {
+                color: var(--ink2);
+                transform: rotate(90deg);
+            }
+
+            .proxy-body {
+                margin-top: 8px;
+                padding: 10px 10px;
+                border-radius: 14px;
+                border: 1px solid var(--line);
+                background: rgba(255, 255, 255, 0.46);
+                color: var(--ink2);
+                font-size: 12px;
+                line-height: 1.35;
+                white-space: pre-wrap;
+            }
+
+            .card {
+                background: linear-gradient(
+                    180deg,
+                    var(--paper2),
+                    rgba(247, 249, 243, 0.84)
+                );
+                border: 1px solid var(--line);
+                border-radius: var(--r);
+                box-shadow: var(--shadow);
+                overflow: hidden;
+                position: relative;
+            }
+
+            .card::after {
+                content: "";
+                position: absolute;
+                inset: 0;
+                pointer-events: none;
+                background:
+                    radial-gradient(
+                        620px 260px at 10% 0%,
+                        rgba(29, 78, 216, 0.11),
+                        transparent 58%
+                    ),
+                    radial-gradient(
+                        560px 260px at 92% 35%,
+                        rgba(14, 165, 233, 0.10),
+                        transparent 62%
+                    );
+                opacity: 0.55;
+            }
+
+            .card > * {
+                position: relative;
+                z-index: 1;
+            }
+
+            .sidebar {
+                padding: 16px 16px 12px;
+            }
+
+            .brand {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                padding-bottom: 12px;
+                border-bottom: 1px solid var(--line);
+                margin-bottom: 12px;
+            }
+
+            .brand h1 {
+                font-family: ui-serif, Georgia, "Times New Roman", Times,
+                    serif;
+                font-size: 16px;
+                letter-spacing: 0.02em;
+                margin: 0;
+                color: var(--ink);
+            }
+
+            .brand .dot {
+                width: 12px;
+                height: 12px;
+                border-radius: 4px;
+                background: linear-gradient(
+                    135deg,
+                    var(--accent),
+                    var(--accent2)
+                );
+                box-shadow: 0 10px 20px rgba(29, 78, 216, 0.22);
+                transform: rotate(7deg);
+            }
+
+            .meta {
+                color: var(--ink2);
+                font-size: 12px;
+                line-height: 1.4;
+            }
+            .meta .path {
+                color: rgba(20, 21, 22, 0.92);
+                word-break: break-all;
+            }
+
+            .toolbar {
+                display: grid;
+                grid-template-columns: 1fr auto;
+                gap: 10px;
+                margin-top: 12px;
+            }
+
+            .input {
+                width: 100%;
+                padding: 10px 12px;
+                border-radius: var(--r2);
+                border: 1px solid var(--line2);
+                background: rgba(255, 255, 255, 0.75);
+                color: var(--ink);
+                outline: none;
+                box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset;
+            }
+            .input::placeholder {
+                color: rgba(20, 21, 22, 0.42);
+            }
+
+            button {
+                appearance: none;
+                border: 1px solid var(--line2);
+                background: rgba(255, 255, 255, 0.84);
+                color: var(--ink);
+                padding: 10px 12px;
+                border-radius: var(--r2);
+                cursor: pointer;
+                font-size: 13px;
+                letter-spacing: 0.01em;
+                transition:
+                    transform 110ms ease,
+                    box-shadow 140ms ease,
+                    background 140ms ease,
+                    border-color 140ms ease;
+                user-select: none;
+                box-shadow:
+                    0 1px 0 rgba(255, 255, 255, 0.65) inset,
+                    0 8px 16px rgba(12, 12, 12, 0.08);
+            }
+            button:hover {
+                background: rgba(255, 255, 255, 0.92);
+                border-color: rgba(20, 21, 22, 0.34);
+                transform: translateY(-1px);
+                box-shadow:
+                    0 1px 0 rgba(255, 255, 255, 0.65) inset,
+                    0 12px 24px rgba(12, 12, 12, 0.1);
+            }
+            button:disabled {
+                opacity: 0.6;
+                cursor: not-allowed;
+                transform: none;
+                box-shadow:
+                    0 1px 0 rgba(255, 255, 255, 0.65) inset,
+                    0 6px 12px rgba(12, 12, 12, 0.06);
+            }
+
+            .btn-primary {
+                border-color: rgba(29, 78, 216, 0.42);
+                background: linear-gradient(
+                    180deg,
+                    rgba(29, 78, 216, 0.14),
+                    rgba(29, 78, 216, 0.06)
+                );
+            }
+            .btn-primary:hover {
+                background: linear-gradient(
+                    180deg,
+                    rgba(29, 78, 216, 0.18),
+                    rgba(29, 78, 216, 0.07)
+                );
+            }
+
+            .btn-danger {
+                border-color: rgba(180, 35, 24, 0.42);
+                background: linear-gradient(
+                    180deg,
+                    rgba(180, 35, 24, 0.14),
+                    rgba(180, 35, 24, 0.06)
+                );
+            }
+
+            .btn-ghost {
+                background: transparent;
+                box-shadow: none;
+            }
+            .btn-ghost:hover {
+                background: rgba(255, 255, 255, 0.72);
+                box-shadow:
+                    0 1px 0 rgba(255, 255, 255, 0.65) inset,
+                    0 10px 18px rgba(12, 12, 12, 0.08);
+            }
+
+            .list {
+                margin-top: 12px;
+                display: grid;
+                gap: 10px;
+            }
+
+            .item {
+                display: grid;
+                grid-template-columns: 40px 1fr auto;
+                align-items: center;
+                gap: 12px;
+                padding: 12px 12px;
+                border-radius: var(--r2);
+                border: 1px solid rgba(20, 21, 22, 0.12);
+                background: linear-gradient(
+                    180deg,
+                    rgba(255, 255, 255, 0.78),
+                    rgba(255, 255, 255, 0.66)
+                );
+                box-shadow: 0 10px 22px rgba(18, 22, 18, 0.1);
+                position: relative;
+                overflow: hidden;
+                transition:
+                    border-color 140ms ease,
+                    transform 140ms ease,
+                    box-shadow 140ms ease;
+            }
+            .item.has-check {
+                grid-template-columns: 26px 40px 1fr auto;
+                padding-left: 10px;
+            }
+            .item::before {
+                content: "";
+                position: absolute;
+                left: 0;
+                top: 10px;
+                bottom: 10px;
+                width: 3px;
+                border-radius: 999px;
+                background: rgba(26, 28, 26, 0.12);
+                opacity: 0;
+                transition: opacity 140ms ease, background 140ms ease;
+            }
+            .item:hover {
+                transform: translateY(-1px);
+                border-color: rgba(20, 21, 22, 0.2);
+                box-shadow: 0 16px 34px rgba(14, 16, 18, 0.12);
+            }
+            .item:hover::before {
+                opacity: 0.32;
+            }
+            .item.is-active {
+                border-color: rgba(43, 111, 106, 0.28);
+                box-shadow: 0 20px 44px rgba(14, 16, 18, 0.14);
+            }
+            .item.is-active::before {
+                opacity: 1;
+                background: linear-gradient(
+                    180deg,
+                    rgba(43, 111, 106, 0.92),
+                    rgba(122, 168, 122, 0.78)
+                );
+            }
+
+            .avatar {
+                width: 38px;
+                height: 38px;
+                border-radius: 14px;
+                border: 1px solid rgba(43, 111, 106, 0.18);
+                background: linear-gradient(
+                    135deg,
+                    rgba(43, 111, 106, 0.18),
+                    rgba(122, 168, 122, 0.12)
+                );
+                display: grid;
+                place-items: center;
+                color: rgba(20, 21, 22, 0.92);
+                font-weight: 650;
+                letter-spacing: 0.04em;
+                font-size: 12px;
+            }
+            .item.is-active .avatar {
+                border-color: rgba(43, 111, 106, 0.28);
+                background: linear-gradient(
+                    135deg,
+                    rgba(43, 111, 106, 0.24),
+                    rgba(122, 168, 122, 0.14)
+                );
+            }
+
+            .item .name {
+                overflow: hidden;
+                white-space: nowrap;
+                text-overflow: ellipsis;
+                font-size: 13px;
+                line-height: 1.2;
+                font-weight: 650;
+            }
+
+            .item .subline {
+                color: var(--ink3);
+                font-size: 12px;
+                margin-top: 3px;
+            }
+
+            .pill {
+                display: inline-flex;
+                align-items: center;
+                gap: 7px;
+                padding: 6px 10px;
+                border-radius: 999px;
+                border: 1px solid rgba(20, 21, 22, 0.18);
+                background: rgba(255, 255, 255, 0.84);
+                color: var(--ink2);
+                font-size: 12px;
+            }
+
+            .pill .led {
+                width: 9px;
+                height: 9px;
+                border-radius: 50%;
+                background: rgba(20, 21, 22, 0.25);
+            }
+            .pill.good .led {
+                background: var(--good);
+                box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.14);
+            }
+            .pill.warn .led {
+                background: var(--warn);
+                box-shadow: 0 0 0 4px rgba(180, 83, 9, 0.14);
+            }
+            .pill.bad .led {
+                background: var(--bad);
+                box-shadow: 0 0 0 4px rgba(180, 35, 24, 0.14);
+            }
+            .pill.info .led {
+                background: var(--info);
+                box-shadow: 0 0 0 4px rgba(42, 99, 183, 0.14);
+            }
+
+            .main {
+                padding: 16px;
+            }
+
+            .topbar {
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 14px;
+                padding: 16px;
+                border-bottom: 1px solid var(--line);
+            }
+
+            .topbar h2 {
+                margin: 0;
+                font-family: ui-serif, Georgia, "Times New Roman", Times,
+                    serif;
+                font-size: 18px;
+                letter-spacing: 0.01em;
+            }
+
+            .topbar .desc {
+                margin-top: 6px;
+                color: var(--ink2);
+                font-size: 12px;
+                line-height: 1.5;
+                max-width: 58ch;
+            }
+
+            .top-actions {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                flex-wrap: wrap;
+                justify-content: flex-end;
+            }
+
+            .path-row {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex-wrap: wrap;
+            }
+
+            .mini {
+                padding: 7px 10px;
+                border-radius: 999px;
+                border: 1px solid var(--line);
+                background: rgba(255, 255, 255, 0.7);
+                color: var(--ink2);
+                font-size: 12px;
+                cursor: pointer;
+                transition: transform 0.12s ease, background 0.12s ease;
+                box-shadow: 0 10px 18px rgba(18, 22, 18, 0.06);
+            }
+
+            .mini:hover {
+                background: rgba(255, 255, 255, 0.85);
+                transform: translateY(-1px);
+            }
+
+            .grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 14px;
+                padding: 16px;
+            }
+
+            .panel {
+                border: 1px solid rgba(20, 21, 22, 0.12);
+                background: rgba(255, 255, 255, 0.68);
+                border-radius: var(--r);
+                padding: 14px;
+                box-shadow: var(--shadow2);
+            }
+
+            .panel h3 {
+                margin: 0 0 10px;
+                font-size: 13px;
+                color: rgba(20, 21, 22, 0.86);
+                letter-spacing: 0.03em;
+                text-transform: uppercase;
+            }
+
+            .kv {
+                display: grid;
+                grid-template-columns: 120px 1fr;
+                gap: 8px 10px;
+                font-size: 12px;
+                color: var(--ink2);
+            }
+
+            .kv .k {
+                color: rgba(20, 21, 22, 0.56);
+            }
+
+            .kv .v {
+                color: rgba(20, 21, 22, 0.92);
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .sessions {
+                display: grid;
+                gap: 10px;
+                margin-top: 12px;
+            }
+
+            .session-card {
+                border: 1px solid rgba(20, 21, 22, 0.14);
+                background: rgba(255, 255, 255, 0.72);
+                border-radius: var(--r2);
+                padding: 12px;
+                box-shadow: var(--shadow2);
+            }
+
+            .session-h {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+            }
+
+            .session-title {
+                font-size: 13px;
+                font-weight: 700;
+                letter-spacing: 0.01em;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                min-width: 0;
+            }
+
+            .session-sub {
+                margin-top: 6px;
+                color: var(--ink3);
+                font-size: 12px;
+                line-height: 1.45;
+                white-space: pre-line;
+            }
+
+            .session-kv {
+                margin-top: 10px;
+                display: grid;
+                grid-template-columns: 96px 1fr;
+                gap: 6px 10px;
+                font-size: 12px;
+                color: var(--ink2);
+            }
+
+            .session-kv .k {
+                color: rgba(20, 21, 22, 0.56);
+            }
+
+            .session-kv .v {
+                color: rgba(20, 21, 22, 0.92);
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .row {
+                display: flex;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+
+            .status {
+                margin-top: 14px;
+                padding: 10px 12px;
+                border-radius: var(--r2);
+                border: 1px solid rgba(20, 21, 22, 0.16);
+                background: rgba(255, 255, 255, 0.76);
+                color: rgba(20, 21, 22, 0.72);
+                font-size: 12px;
+                line-height: 1.5;
+                min-height: 18px;
+            }
+
+            .status.ok {
+                border-color: rgba(15, 118, 110, 0.28);
+                background: rgba(15, 118, 110, 0.08);
+                color: rgba(10, 89, 83, 0.92);
+            }
+            .status.warn {
+                border-color: rgba(180, 83, 9, 0.28);
+                background: rgba(180, 83, 9, 0.08);
+                color: rgba(122, 60, 10, 0.92);
+            }
+            .status.err {
+                border-color: rgba(180, 35, 24, 0.28);
+                background: rgba(180, 35, 24, 0.08);
+                color: rgba(122, 22, 18, 0.92);
+            }
+
+            .hint {
+                color: var(--ink2);
+                font-size: 12px;
+                line-height: 1.5;
+            }
+
+            .inline-actions {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .check {
+                display: grid;
+                place-items: center;
+                width: 18px;
+                height: 18px;
+                border-radius: 6px;
+                border: 1px solid rgba(20, 21, 22, 0.22);
+                background: rgba(255, 255, 255, 0.9);
+                box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset;
+                transition:
+                    transform 120ms ease,
+                    border-color 140ms ease,
+                    background 140ms ease;
+            }
+            .check:hover {
+                transform: translateY(-1px);
+                border-color: rgba(20, 21, 22, 0.34);
+            }
+            .check input {
+                appearance: none;
+                width: 14px;
+                height: 14px;
+                border-radius: 4px;
+                margin: 0;
+                border: 1px solid rgba(20, 21, 22, 0.18);
+                background: rgba(255, 255, 255, 0.7);
+                position: relative;
+            }
+            .check input:checked {
+                border-color: rgba(43, 111, 106, 0.35);
+                background: linear-gradient(
+                    180deg,
+                    rgba(43, 111, 106, 0.18),
+                    rgba(43, 111, 106, 0.06)
+                );
+            }
+            .check input:checked::after {
+                content: "";
+                position: absolute;
+                inset: 0;
+                background: currentColor;
+                clip-path: polygon(
+                    18% 55%,
+                    28% 45%,
+                    44% 61%,
+                    72% 32%,
+                    82% 42%,
+                    44% 82%
+                );
+                color: rgba(26, 28, 26, 0.9);
+            }
+
+            .icon-btn {
+                width: 36px;
+                height: 36px;
+                padding: 0;
+                display: grid;
+                place-items: center;
+                border-radius: 12px;
+            }
+
+            .icon {
+                width: 16px;
+                height: 16px;
+                opacity: 0.9;
+            }
+
+            .empty {
+                padding: 14px;
+                border-radius: var(--r2);
+                border: 1px dashed rgba(20, 21, 22, 0.22);
+                background: rgba(255, 255, 255, 0.68);
+                color: var(--ink2);
+                font-size: 12px;
+                line-height: 1.6;
+            }
+
+            @media (max-width: 980px) {
+                .app {
+                    grid-template-columns: 1fr;
+                }
+                .grid {
+                    grid-template-columns: 1fr;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="overlay" id="activateOverlay" hidden>
+            <div class="overlay-card" aria-label="激活">
+                <div class="overlay-h">
+                    <h2>激活后使用</h2>
+                    <span class="pill" title="说明">
+                        <span class="led" aria-hidden="true"></span>
+                        <span>一次激活 · 账号按机器分配</span>
+                    </span>
+                </div>
+                <div class="overlay-b">
+                    <div class="desc" style="margin: 0 0 10px 0">
+                        请输入管理员发放的激活码，并确认服务地址可访问。
+                    </div>
+
+                    <div class="grid2">
+                        <div class="panel" style="margin: 0">
+                            <h3 style="margin-top: 0">服务信息</h3>
+                            <div class="kv2" style="margin-top: 10px">
+                                <div class="k">服务地址</div>
+                                <div class="v">
+                                    <input
+                                        class="input"
+                                        id="actServerUrl"
+                                        placeholder="http://10.0.0.2:3123"
+                                        autocomplete="off"
+                                    />
+                                </div>
+                            </div>
+                            <div style="height: 10px"></div>
+                            <div class="row">
+                                <button class="btn-ghost" id="btnCopyServer">
+                                    复制服务地址
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="panel" style="margin: 0">
+                            <h3 style="margin-top: 0">输入激活码</h3>
+                            <div class="hint">
+                                激活码一次性；每台机器只能激活一次。
+                            </div>
+                            <div style="height: 10px"></div>
+                            <input
+                                class="input"
+                                id="actCode"
+                                placeholder="例如：FMA-ABCD-EFGH-IJKL"
+                                autocomplete="off"
+                            />
+                            <div style="height: 10px"></div>
+                            <div class="row">
+                                <button class="btn-primary" id="btnActivate">
+                                    激活
+                                </button>
+                                <button class="btn-ghost" id="btnActRefresh">
+                                    刷新状态
+                                </button>
+                            </div>
+                            <div class="status" id="actStatus" hidden></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="overlay" id="serverOverlay" hidden>
+            <div class="overlay-card" aria-label="服务设置">
+                <div class="overlay-h">
+                    <h2>服务设置</h2>
+                    <span class="pill" title="说明">
+                        <span class="led" aria-hidden="true"></span>
+                        <span>修改服务地址与端口</span>
+                    </span>
+                </div>
+                <div class="overlay-b">
+                    <div class="desc" style="margin: 0 0 10px 0">
+                        当管理员服务的 IP/端口发生变化时，在这里更新即可（例如从
+                        :3123 改为 :4000）。
+                    </div>
+
+                    <div class="panel" style="margin: 0">
+                        <h3 style="margin-top: 0">服务地址</h3>
+                        <div class="kv2" style="margin-top: 10px">
+                            <div class="k">地址</div>
+                            <div class="v">
+                                <input
+                                    class="input"
+                                    id="srvUrl"
+                                    placeholder="http://10.0.0.2:3123"
+                                    autocomplete="off"
+                                />
+                            </div>
+                        </div>
+                        <div style="height: 10px"></div>
+                        <div class="row">
+                            <button class="btn-primary" id="btnSrvSave">
+                                保存
+                            </button>
+                            <button class="btn-ghost" id="btnSrvClose">
+                                关闭
+                            </button>
+                        </div>
+                        <div class="status" id="srvStatus" hidden></div>
+                        <div class="hint" style="margin-top: 10px">
+                            如管理员重置了本机，客户端会在下次请求时自动回到激活页。
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="app">
+            <section class="card sidebar" aria-label="账号列表">
+                <div class="brand">
+                    <div style="display: flex; align-items: center; gap: 10px">
+                        <span class="dot" aria-hidden="true"></span>
+                        <h1>Flow 多账号管理器</h1>
+                    </div>
+                    <span id="pillRuntime" class="pill" title="运行状态">
+                        <span class="led" aria-hidden="true"></span>
+                        <span id="pillText">准备就绪</span>
+                    </span>
+                </div>
+
+                <div class="meta" id="metaLine">
+                    多窗口模式：每个账号打开一个独立 Flow
+                    窗口，互不影响，可并行操作。<br />
+                    <div class="path-row" id="profilesRow" style="margin-top: 6px">
+                        <span>账号目录：</span>
+                        <span class="path" id="profilesPath">—</span>
+                    </div>
+                    <div class="path-row" style="margin-top: 6px">
+                        <span>下载目录：</span>
+                        <span class="path" id="downloadsPath">—</span>
+                        <button class="mini" id="btnChangeDownloads">
+                            更改
+                        </button>
+                        <button class="mini" id="btnResetDownloads">
+                            恢复默认
+                        </button>
+                    </div>
+                    <div class="path-row" style="margin-top: 6px">
+                        <span>插件：</span>
+                        <span
+                            id="pillSingBox"
+                            class="pill"
+                            title="插件状态"
+                            style="padding: 4px 8px; font-size: 11px"
+                        >
+                            <span class="led" aria-hidden="true"></span>
+                            <span id="pillSingBoxText">插件未检测</span>
+                        </span>
+                    </div>
+                </div>
+
+                <div class="toolbar" role="group" aria-label="筛选与添加">
+                    <input
+                        class="input"
+                        id="search"
+                        placeholder="搜索账号（名称）"
+                        autocomplete="off"
+                    />
+                    <button class="btn-primary" id="btnAdd">＋ 新账号</button>
+                </div>
+
+                <div class="row" style="margin-top: 10px">
+                    <button id="btnImport" class="btn-ghost">
+                        导入现有 JSON
+                    </button>
+                    <button id="btnExport" class="btn-ghost">
+                        导出全部 JSON
+                    </button>
+                </div>
+
+                <div class="list" id="list"></div>
+                <div
+                    class="status"
+                    id="status"
+                    role="status"
+                    aria-live="polite"
+                    hidden
+                ></div>
+            </section>
+
+            <section class="card main" aria-label="控制台">
+                <div class="topbar">
+                    <div>
+                        <h2>控制台</h2>
+                        <div class="desc">
+                            日常操作只需要两步：先“保存账号”，之后从左侧点击“打开”。如果
+                            Flow 加载慢，窗口已打开时可手动刷新。
+                        </div>
+                    </div>
+                    <div class="top-actions">
+                        <button class="btn-ghost" id="btnOpenFolder">
+                            打开账号目录
+                        </button>
+                        <button class="btn-ghost" id="btnOpenDownloads">
+                            打开下载目录
+                        </button>
+                        <button class="btn-ghost" id="btnServerSettings">
+                            服务设置
+                        </button>
+                        <button class="btn-ghost" id="btnSync">
+                            同步账号
+                        </button>
+                        <button class="btn-ghost" id="btnRefresh">刷新</button>
+                    </div>
+                </div>
+
+                <div class="grid">
+                    <div class="panel">
+                        <h3>当前状态</h3>
+                        <div class="kv">
+                            <div class="k">浏览器进程</div>
+                            <div class="v" id="kvBrowser">—</div>
+                            <div class="k">已打开窗口</div>
+                            <div class="v" id="kvSessions">—</div>
+                        </div>
+                        <div class="sessions" id="sessions"></div>
+                        <div style="height: 12px"></div>
+                        <div class="row">
+                            <button class="btn-danger" id="btnCloseFlow">
+                                关闭全部窗口
+                            </button>
+                            <button class="btn-danger" id="btnQuitBrowser">
+                                退出浏览器进程
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="panel" id="panelCapture">
+                        <h3>保存账号（一次性）</h3>
+                        <div class="hint">
+                            1) 输入账号名 → 2) 会打开一个登录窗口 → 3) 登录目标
+                            Google 账号并进入 Flow → 4) 回到这里点“保存完成”。
+                        </div>
+                        <div style="height: 10px"></div>
+                        <input
+                            class="input"
+                            id="captureName"
+                            placeholder="例如：269 / 账号A / 张三-备用"
+                            autocomplete="off"
+                        />
+                        <div style="height: 10px"></div>
+                        <div class="row">
+                            <button class="btn-primary" id="btnCaptureStart">
+                                开始登录并保存
+                            </button>
+                            <button id="btnCaptureFinish" disabled>
+                                保存完成
+                            </button>
+                            <button id="btnCaptureCancel" disabled>取消</button>
+                        </div>
+                        <div class="status" id="captureStatus" hidden></div>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <script>
+            const api = (() => {
+                if (window.flowApi) return window.flowApi;
+                const json = async (res) => {
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) throw new Error(data.error || "请求失败");
+                    return data;
+                };
+                return {
+                    listProfiles: async () => json(await fetch("/profiles")),
+                    deleteProfile: async (name) =>
+                        json(
+                            await fetch(
+                                `/profiles/${encodeURIComponent(name)}`,
+                                { method: "DELETE" },
+                            ),
+                        ),
+                    openProfile: async (name) =>
+                        json(
+                            await fetch(`/open/${encodeURIComponent(name)}`, {
+                                method: "POST",
+                            }),
+                        ),
+                    closeFlowWindow: async () =>
+                        json(await fetch("/close", { method: "POST" })),
+                    closeFlowSession: async (sessionId) =>
+                        json(
+                            await fetch(`/close/${encodeURIComponent(sessionId)}`, {
+                                method: "POST",
+                            }),
+                        ),
+                    focusFlowSession: async (sessionId) =>
+                        json(
+                            await fetch(`/focus/${encodeURIComponent(sessionId)}`, {
+                                method: "POST",
+                            }),
+                        ),
+                    quitBrowser: async () =>
+                        json(await fetch("/quit", { method: "POST" })),
+                    getStatus: async () => json(await fetch("/status")),
+                    startCapture: async (name) =>
+                        json(
+                            await fetch(
+                                `/capture/start/${encodeURIComponent(name)}`,
+                                { method: "POST" },
+                            ),
+                        ),
+                    finishCapture: async () =>
+                        json(
+                            await fetch("/capture/finish", { method: "POST" }),
+                        ),
+                    cancelCapture: async () =>
+                        json(
+                            await fetch("/capture/cancel", { method: "POST" }),
+                        ),
+                    openProfilesFolder: async () => ({ success: false }),
+                    openDownloadsFolder: async () => ({ success: false }),
+                    chooseDownloadsFolder: async () => ({ success: false }),
+                    resetDownloadsFolder: async () => ({ success: false }),
+                    activateDevice: async () => ({ success: false }),
+                    setServerUrl: async () => ({ success: false }),
+                    syncDeviceProfiles: async () => ({ success: false }),
+                    importProfiles: async () => ({ success: false }),
+                    exportProfiles: async () => ({ success: false }),
+                };
+            })();
+
+            // Enhance Electron API if available (desktop app mode)
+            if (window.flowApi) {
+                api.importProfiles = window.flowApi.importProfiles;
+                api.openProfilesFolder = window.flowApi.openProfilesFolder;
+                api.openDownloadsFolder = window.flowApi.openDownloadsFolder;
+                api.chooseDownloadsFolder = window.flowApi.chooseDownloadsFolder;
+                api.resetDownloadsFolder = window.flowApi.resetDownloadsFolder;
+                api.exportProfiles = window.flowApi.exportProfiles;
+                api.activateDevice = window.flowApi.activateDevice;
+                api.setServerUrl = window.flowApi.setServerUrl;
+                api.syncDeviceProfiles = window.flowApi.syncDeviceProfiles;
+                api.closeFlowSession = window.flowApi.closeFlowSession;
+                api.focusFlowSession = window.flowApi.focusFlowSession;
+            }
+
+            let statusTimer = null;
+            let refreshing = false;
+            let currentProfiles = [];
+            let deleteArmed = new Set();
+            let selectedProfiles = new Set();
+            let managedMode = false;
+            let deviceInfo = null;
+
+            function updateExportButton() {
+                const btn = document.getElementById("btnExport");
+                const n = selectedProfiles.size;
+                btn.textContent = n > 0 ? `导出所选（${n}）` : "导出全部 JSON";
+            }
+
+            function esc(str) {
+                return String(str)
+                    .replaceAll("&", "&amp;")
+                    .replaceAll("<", "&lt;")
+                    .replaceAll(">", "&gt;")
+                    .replaceAll('"', "&quot;")
+                    .replaceAll("'", "&#039;");
+            }
+
+            function ts(input) {
+                const s = String(input || "").trim();
+                if (!s) return "—";
+                const t = Date.parse(s);
+                if (!Number.isFinite(t)) return s;
+                try {
+                    const parts = new Intl.DateTimeFormat("zh-CN", {
+                        timeZone: "Asia/Shanghai",
+                        year: "numeric",
+                        month: "2-digit",
+                        day: "2-digit",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                        hour12: false,
+                    }).formatToParts(new Date(t));
+                    const get = (type) =>
+                        parts.find((p) => p.type === type)?.value || "";
+                    return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
+                } catch {
+                    try {
+                        return new Date(t).toLocaleString("zh-CN", {
+                            timeZone: "Asia/Shanghai",
+                            hour12: false,
+                        });
+                    } catch {
+                        return s;
+                    }
+                }
+            }
+
+            function initials(name) {
+                const s = String(name || "").trim();
+                if (!s) return "??";
+                if (/^[0-9]+$/.test(s)) return s.length <= 3 ? s : s.slice(-3);
+                const parts = s.split(/\s+/).filter(Boolean);
+                if (parts.length === 1)
+                    return parts[0].slice(0, 2).toUpperCase();
+                return (parts[0][0] + parts[1][0]).toUpperCase();
+            }
+
+            function setStatus(
+                kind,
+                text,
+                { autoHideMs = 5000, elId = "status" } = {},
+            ) {
+                const el = document.getElementById(elId);
+                el.className = `status ${kind || ""}`.trim();
+                const msg = text ? String(text) : "";
+                el.textContent = msg;
+                el.hidden = msg.length === 0;
+                if (elId !== "status") return;
+                if (statusTimer) clearTimeout(statusTimer);
+                if (autoHideMs) {
+                    statusTimer = setTimeout(() => {
+                        el.className = "status";
+                        el.textContent = "";
+                        el.hidden = true;
+                    }, autoHideMs);
+                }
+            }
+
+            function openServerOverlay() {
+                const ov = document.getElementById("serverOverlay");
+                if (!ov) return;
+                ov.hidden = false;
+                const input = document.getElementById("srvUrl");
+                if (input) input.value = deviceInfo?.serverUrl || input.value;
+                setStatus("", "", { elId: "srvStatus" });
+                try {
+                    input?.focus();
+                    input?.select();
+                } catch {}
+            }
+
+            function closeServerOverlay() {
+                const ov = document.getElementById("serverOverlay");
+                if (!ov) return;
+                ov.hidden = true;
+                setStatus("", "", { elId: "srvStatus" });
+            }
+
+            async function saveServerUrl() {
+                const url =
+                    document.getElementById("srvUrl")?.value?.trim() || "";
+                try {
+                    setStatus("warn", "正在保存…", {
+                        elId: "srvStatus",
+                        autoHideMs: 0,
+                    });
+                    const r = await api.setServerUrl(url);
+                    if (r && r.success === false) {
+                        setStatus(
+                            "err",
+                            r.error || "保存失败",
+                            { elId: "srvStatus", autoHideMs: 9000 },
+                        );
+                        return;
+                    }
+                    await refreshAll({ silent: true });
+                    setStatus("ok", "已保存服务地址", {
+                        elId: "srvStatus",
+                        autoHideMs: 2000,
+                    });
+                    closeServerOverlay();
+                } catch (err) {
+                    setStatus("err", err.message || "保存失败", {
+                        elId: "srvStatus",
+                        autoHideMs: 9000,
+                    });
+                }
+            }
+
+            function setPill({ kind, text }) {
+                const pill = document.getElementById("pillRuntime");
+                const t = document.getElementById("pillText");
+                pill.className = `pill ${kind || ""}`.trim();
+                t.textContent = text || "—";
+            }
+
+            function setSingBoxPill({ kind, text, title }) {
+                const pill = document.getElementById("pillSingBox");
+                const t = document.getElementById("pillSingBoxText");
+                if (!pill || !t) return;
+                pill.className = `pill ${kind || ""}`.trim();
+                t.textContent = text || "—";
+                pill.title = title || "插件状态";
+            }
+
+            function renderSessions({ sessions, includeDebug }) {
+                const host = document.getElementById("sessions");
+                if (!host) return;
+                host.innerHTML = "";
+
+                const list = Array.isArray(sessions) ? sessions : [];
+                if (!list.length) {
+                    host.innerHTML =
+                        '<div class="empty" style="margin-top: 10px">还没有打开任何账号窗口。</div>';
+                    return;
+                }
+
+                for (const s of list) {
+                    const id = String(s?.id || "");
+                    const name = String(s?.profile || "—");
+                    const proxy = s?.proxy || null;
+                    const warning = String(s?.warning || "").trim();
+                    const proxyText = proxy?.serverMasked
+                        ? `${proxy.serverMasked}（${proxy.source || "未知来源"}${
+                              proxy.via ? "，本地转发" : ""
+                          }）`
+                        : "未使用";
+                    const proxyId = proxy?.poolItemId ? String(proxy.poolItemId) : "";
+
+                    const card = document.createElement("div");
+                    card.className = "session-card";
+                    card.dataset.sid = id;
+
+                    const actions = document.createElement("div");
+                    actions.className = "row";
+                    actions.style.gap = "8px";
+
+                    const btnFocus = document.createElement("button");
+                    btnFocus.className = "btn-ghost";
+                    btnFocus.textContent = "聚焦";
+                    btnFocus.addEventListener("click", async () => {
+                        try {
+                            await api.focusFlowSession(id);
+                        } catch (e) {
+                            setStatus("warn", e.message || "聚焦失败", {
+                                autoHideMs: 5000,
+                            });
+                        }
+                    });
+
+                    const btnClose = document.createElement("button");
+                    btnClose.className = "btn-danger";
+                    btnClose.textContent = "关闭";
+                    btnClose.addEventListener("click", async () => {
+                        try {
+                            await api.closeFlowSession(id);
+                            await refreshAll({ silent: true });
+                        } catch (e) {
+                            setStatus("warn", e.message || "关闭失败", {
+                                autoHideMs: 5000,
+                            });
+                        }
+                    });
+
+                    actions.appendChild(btnFocus);
+                    actions.appendChild(btnClose);
+
+                    const title = document.createElement("div");
+                    title.className = "session-title";
+                    title.innerHTML = `<span style="color: var(--accent)">●</span><span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${esc(
+                        name,
+                    )}</span>`;
+
+                    const head = document.createElement("div");
+                    head.className = "session-h";
+                    head.appendChild(title);
+                    head.appendChild(actions);
+
+                    const kv = document.createElement("div");
+                    kv.className = "session-kv";
+                    const detailsLines = [];
+                    const src = proxy?.source ? String(proxy.source) : "";
+                    if (src) detailsLines.push(`来源：${src}`);
+                    if (proxyId) detailsLines.push(`poolItemId：${proxyId}`);
+                    if (proxy?.nodeId) detailsLines.push(`nodeId：${String(proxy.nodeId)}`);
+                    if (proxy?.via) detailsLines.push(`本地转发：${String(proxy.via)}`);
+                    if (includeDebug && s?.proxyDebug?.effective?.server) {
+                        detailsLines.push(
+                            `有效代理：${String(
+                                s.proxyDebug.effective.server || "",
+                            )}${s.proxyDebug.via ? `（本地转发：${s.proxyDebug.via}）` : ""}`,
+                        );
+                    }
+                    if (proxyId) {
+                        detailsLines.push(
+                            `提示：去管理端「代理池」搜索框输入 poolItemId 可快速定位并禁用。`,
+                        );
+                    }
+
+                    const detailText = detailsLines.filter(Boolean).join("\n");
+                    const proxyCell = proxy?.serverMasked
+                        ? `
+                          <details class="proxy-details">
+                            <summary>
+                              <span class="proxy-summary">
+                                <span class="proxy-caret">›</span>
+                                <span>${esc(proxyText)}</span>
+                              </span>
+                            </summary>
+                            ${detailText ? `<div class="proxy-body">${esc(detailText)}</div>` : ""}
+                          </details>
+                        `
+                        : `<span>${esc(proxyText)}</span>`;
+
+                    kv.innerHTML = `
+                      <div class="k">代理</div>
+                      <div class="v" title="">${proxyCell}</div>
+                      <div class="k">创建</div>
+                      <div class="v">${esc(ts(s?.createdAt))}</div>
+                    `;
+
+                    if (includeDebug && s?.proxyDebug?.upstream?.server) {
+                        const up = s.proxyDebug.upstream || {};
+                        const eff = s.proxyDebug.effective || {};
+                        const full = [
+                            `来源：${s.proxyDebug.source || "未知"}`,
+                            `上游：${
+                                String(up.server || "").startsWith("vless://") ||
+                                String(up.server || "").startsWith("hysteria2://")
+                                    ? "（节点链接已隐藏）"
+                                    : up.server || ""
+                            }`,
+                            `用户名：${up.username || ""}`,
+                            `密码：${up.password || ""}`,
+                            `有效：${eff.server || ""}${
+                                s.proxyDebug.via
+                                    ? `（本地转发：${s.proxyDebug.via}）`
+                                    : ""
+                            }`,
+                        ].join("\n");
+                        kv.querySelector(".v")?.setAttribute("title", full);
+                    }
+
+                    const sub = document.createElement("div");
+                    sub.className = "session-sub";
+                    sub.textContent = warning
+                        ? warning
+                        : "窗口已打开：可并行操作多个账号。";
+
+                    card.appendChild(head);
+                    card.appendChild(kv);
+                    card.appendChild(sub);
+                    host.appendChild(card);
+                }
+            }
+
+            function renderList({ profiles, filter, activeProfile, managed }) {
+                const list = document.getElementById("list");
+                list.innerHTML = "";
+
+                const q = String(filter || "")
+                    .trim()
+                    .toLowerCase();
+                const filtered = profiles.filter((p) =>
+                    p.toLowerCase().includes(q),
+                );
+
+                if (!filtered.length) {
+                    list.innerHTML = managed
+                        ? '<div class="empty">还没有可用账号。<br/><br/>请点击右上角“同步账号”，或联系管理员为该机器分配账号。</div>'
+                        : '<div class="empty">还没有账号，或没有匹配的搜索结果。<br/><br/>点击“＋ 新账号”，按右侧流程完成一次登录保存即可。</div>';
+                    return;
+                }
+
+                filtered.forEach((name) => {
+                    const isActive = activeProfile && name === activeProfile;
+                    const armed = deleteArmed.has(name);
+                    const selected = selectedProfiles.has(name);
+
+                    const el = document.createElement("div");
+                    el.className = [
+                        "item",
+                        managed ? "" : "has-check",
+                        isActive ? "is-active" : "",
+                    ]
+                        .filter(Boolean)
+                        .join(" ");
+                    el.dataset.name = name;
+                    const checkbox = managed
+                        ? ""
+                        : `<label class="check" title="选择用于导出">
+              <input type="checkbox" data-sel="${esc(name)}" ${
+                              selected ? "checked" : ""
+                          } />
+            </label>`;
+                    const delBtn = managed
+                        ? ""
+                        : `<button class="icon-btn btn-ghost" data-del="${esc(
+                              name,
+                          )}" title="删除">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M9 3h6m-8 4h10m-9 0 1 15h6l1-15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>`;
+
+                    el.innerHTML = `
+            ${checkbox}
+            <div class="avatar" title="${esc(name)}">${esc(initials(name))}</div>
+            <div>
+              <div class="name">${esc(name)}${isActive ? ' <span style="color: var(--accent)">· 正在使用</span>' : ""}</div>
+              <div class="subline">${
+                  managed
+                      ? "点击打开 → 打开一个独立 Flow 窗口"
+                      : armed
+                        ? "再次点击垃圾桶确认删除（不会弹窗）"
+                        : "点击打开 → 打开一个独立 Flow 窗口"
+              }</div>
+            </div>
+            <div class="inline-actions">
+              <button class="btn-primary" data-open="${esc(name)}">打开</button>
+              ${delBtn}
+            </div>
+          `;
+                    list.appendChild(el);
+                });
+            }
+
+            async function refreshAll({ silent = false } = {}) {
+                if (refreshing) return;
+                refreshing = true;
+                if (!silent) setStatus("warn", "刷新中...", { autoHideMs: 0 });
+
+                try {
+                    const [profilesList, status] = await Promise.all([
+                        api.listProfiles(),
+                        api.getStatus(),
+                    ]);
+                    currentProfiles = Array.isArray(profilesList)
+                        ? profilesList
+                        : profilesList.profiles || [];
+                    {
+                        const available = new Set(currentProfiles);
+                        for (const name of Array.from(selectedProfiles)) {
+                            if (!available.has(name)) selectedProfiles.delete(name);
+                        }
+                    }
+                    const flow =
+                        status.flow ||
+                        status?.flowWindow ||
+                        status?.flowState ||
+                        status.flow;
+                    const capture = status.capture || {};
+                    const dev = status.device || null;
+                    deviceInfo = dev;
+                    const activated = Boolean(dev && dev.activated);
+                    const noLocalProfiles = Boolean(status && status.noLocalProfiles);
+                    managedMode = activated;
+
+                    // Activation gate (desktop mode)
+                    const overlay = document.getElementById("activateOverlay");
+                    const appRoot = document.querySelector(".app");
+                    if (overlay && appRoot && dev && dev.machineId) {
+                        if (!activated) {
+                            overlay.hidden = false;
+                            appRoot.hidden = true;
+                            const serverInput =
+                                document.getElementById("actServerUrl");
+                            if (serverInput && !serverInput.value)
+                                serverInput.value = dev.serverUrl || "";
+                        } else {
+                            overlay.hidden = true;
+                            appRoot.hidden = false;
+                        }
+                    }
+                    const activeProfile =
+                        flow?.lastOpenedProfile ||
+                        flow?.activeProfile ||
+                        status?.activeProfile ||
+                        null;
+                    if (status.profilesDir) {
+                        const base = status.profilesDir;
+                        document.getElementById("profilesPath").textContent =
+                            status.noLocalProfiles ? `${base}（无落盘）` : base;
+                    }
+                    const profilesRow = document.getElementById("profilesRow");
+                    if (profilesRow) profilesRow.hidden = Boolean(status.noLocalProfiles);
+                    if (status.downloadsDir)
+                        document.getElementById("downloadsPath").textContent =
+                            status.downloadsDir;
+
+                    const browserOn = Boolean(flow?.hasBrowser);
+                    const sessionsList = Array.isArray(flow?.sessions)
+                        ? flow.sessions
+                        : [];
+                    const inCapture = Boolean(capture?.inProgress);
+
+                    document.getElementById("kvBrowser").textContent = browserOn
+                        ? "运行中"
+                        : "未启动";
+                    document.getElementById("kvSessions").textContent = String(
+                        sessionsList.length,
+                    );
+                    renderSessions({
+                        sessions: sessionsList,
+                        includeDebug: sessionsList.some(
+                            (x) => x && x.proxyDebug,
+                        ),
+                    });
+
+                    if (inCapture) {
+                        const name = capture.profileName || "—";
+                        document.getElementById("captureName").value = name;
+                        document.getElementById("btnCaptureStart").disabled =
+                            true;
+                        document.getElementById("btnCaptureFinish").disabled =
+                            false;
+                        document.getElementById("btnCaptureCancel").disabled =
+                            false;
+                        setStatus(
+                            "warn",
+                            `保存流程进行中：${name}（完成登录后点击“保存完成”）`,
+                            {
+                                elId: "captureStatus",
+                                autoHideMs: 0,
+                            },
+                        );
+                    } else {
+                        document.getElementById("btnCaptureStart").disabled =
+                            false;
+                        document.getElementById("btnCaptureFinish").disabled =
+                            true;
+                        document.getElementById("btnCaptureCancel").disabled =
+                            true;
+                        setStatus("", "", { elId: "captureStatus" });
+                    }
+
+                    const kind = browserOn
+                        ? sessionsList.length
+                            ? "good"
+                            : "warn"
+                        : "";
+                    const pillText = browserOn
+                        ? sessionsList.length
+                            ? `已打开 ${sessionsList.length} 个窗口`
+                            : "浏览器已启动"
+                        : "准备就绪";
+                    setPill({ kind, text: pillText });
+
+                    // sing-box plugin status (for node proxies -> local SOCKS landing)
+                    const sb = status?.singBox || null;
+                    const sbState = String(sb?.state || "").trim().toLowerCase();
+                    let sbKind = "warn";
+                    let sbText = "插件未检测";
+                    let sbTitle = "";
+                    if (sbState === "ready") {
+                        sbKind = "good";
+                        sbText = "插件可用";
+                        sbTitle = sb?.bin ? `已安装：${sb.bin}` : "";
+                    } else if (sbState === "downloading" || sbState === "checking") {
+                        sbKind = "info";
+                        sbText = sbState === "downloading" ? "插件下载中…" : "插件检测中…";
+                        sbTitle = sb?.url ? `下载：${sb.url}` : "";
+                    } else if (sbState === "missing") {
+                        sbKind = "bad";
+                        sbText = "插件缺失";
+                        sbTitle = sb?.message ? String(sb.message) : "";
+                    } else if (sbState === "error") {
+                        sbKind = "bad";
+                        sbText = "插件错误";
+                        sbTitle = sb?.message ? String(sb.message) : "";
+                    }
+                    setSingBoxPill({ kind: sbKind, text: sbText, title: sbTitle });
+
+                    // Managed mode: hide local-only features.
+                    const btnAdd = document.getElementById("btnAdd");
+                    const btnImport = document.getElementById("btnImport");
+                    const btnExport = document.getElementById("btnExport");
+                    const panelCapture = document.getElementById("panelCapture");
+                    const btnOpenFolder = document.getElementById("btnOpenFolder");
+                    if (managedMode || noLocalProfiles) {
+                        if (btnAdd) btnAdd.hidden = true;
+                        if (btnImport) btnImport.hidden = true;
+                        if (btnExport) btnExport.hidden = true;
+                        if (panelCapture) panelCapture.hidden = true;
+                        if (btnOpenFolder && noLocalProfiles) btnOpenFolder.hidden = true;
+                    } else {
+                        if (btnAdd) btnAdd.hidden = false;
+                        if (btnImport) btnImport.hidden = false;
+                        if (btnExport) btnExport.hidden = false;
+                        if (panelCapture) panelCapture.hidden = false;
+                        if (btnOpenFolder) btnOpenFolder.hidden = false;
+                    }
+
+                    renderList({
+                        profiles: currentProfiles,
+                        filter: document.getElementById("search").value,
+                        activeProfile,
+                        managed: managedMode || noLocalProfiles,
+                    });
+                    updateExportButton();
+                    if (!silent) setStatus("ok", "已刷新");
+                } catch (err) {
+                    setPill({ kind: "bad", text: "异常" });
+                    if (!silent)
+                        setStatus("err", err.message || "刷新失败", {
+                            autoHideMs: 8000,
+                        });
+                } finally {
+                    refreshing = false;
+                }
+            }
+
+            async function openProfile(name) {
+                const buttons = Array.from(document.querySelectorAll("button"));
+                buttons.forEach((b) => (b.disabled = true));
+
+                try {
+                    setStatus("warn", `正在打开：${name} ...`, {
+                        autoHideMs: 0,
+                    });
+                    const data = await api.openProfile(name);
+                    if (data.warning)
+                        setStatus(
+                            "warn",
+                            `已打开：${name}。${data.warning}`,
+                            { autoHideMs: 8000 },
+                        );
+                    else setStatus("ok", `已打开：${name}`);
+                    deleteArmed.delete(name);
+                    await refreshAll({ silent: true });
+                } catch (err) {
+                    setStatus("err", err.message || "打开失败", {
+                        autoHideMs: 8000,
+                    });
+                } finally {
+                    buttons.forEach((b) => (b.disabled = false));
+                }
+            }
+
+            async function deleteProfile(name) {
+                if (!deleteArmed.has(name)) {
+                    deleteArmed.add(name);
+                    setStatus(
+                        "warn",
+                        `删除已准备：再次点击该账号的垃圾桶将删除「${name}」`,
+                        { autoHideMs: 6500 },
+                    );
+                    await refreshAll({ silent: true });
+                    return;
+                }
+
+                try {
+                    setStatus("warn", `正在删除：${name} ...`, {
+                        autoHideMs: 0,
+                    });
+                    await api.deleteProfile(name);
+                    deleteArmed.delete(name);
+                    await refreshAll({ silent: true });
+                    setStatus("ok", `已删除：${name}`);
+                } catch (err) {
+                    setStatus("err", err.message || "删除失败", {
+                        autoHideMs: 8000,
+                    });
+                }
+            }
+
+            async function startCapture() {
+                const name = document.getElementById("captureName").value;
+                try {
+                    setStatus("warn", "正在启动登录窗口...", { autoHideMs: 0 });
+                    const data = await api.startCapture(name);
+                    document.getElementById("btnCaptureStart").disabled = true;
+                    document.getElementById("btnCaptureFinish").disabled =
+                        false;
+                    document.getElementById("btnCaptureCancel").disabled =
+                        false;
+                    const warn = data.warning ? `\n${data.warning}` : "";
+                    setStatus(
+                        "warn",
+                        `登录窗口已打开：${data.profileName || name}。完成登录后点击“保存完成”。${warn}`,
+                        {
+                            elId: "captureStatus",
+                            autoHideMs: 0,
+                        },
+                    );
+                    setStatus("ok", "登录窗口已打开");
+                } catch (err) {
+                    setStatus("err", err.message || "启动保存失败", {
+                        autoHideMs: 8000,
+                    });
+                }
+            }
+
+            async function finishCapture() {
+                try {
+                    setStatus("warn", "正在保存账号...", { autoHideMs: 0 });
+                    const data = await api.finishCapture();
+                    setStatus(
+                        "ok",
+                        `已保存账号：${data.profileName || ""}`.trim(),
+                    );
+                    setStatus(
+                        "ok",
+                        `保存完成：${data.profileName || ""}`.trim(),
+                        { elId: "captureStatus", autoHideMs: 4000 },
+                    );
+                    document.getElementById("captureName").value = "";
+                    await refreshAll({ silent: true });
+                } catch (err) {
+                    setStatus("err", err.message || "保存失败", {
+                        autoHideMs: 8000,
+                    });
+                }
+            }
+
+            async function cancelCapture() {
+                try {
+                    setStatus("warn", "正在取消保存流程...", { autoHideMs: 0 });
+                    await api.cancelCapture();
+                    setStatus("ok", "已取消保存流程");
+                    setStatus("", "", { elId: "captureStatus" });
+                    await refreshAll({ silent: true });
+                } catch (err) {
+                    setStatus("err", err.message || "取消失败", {
+                        autoHideMs: 8000,
+                    });
+                }
+            }
+
+            document.addEventListener("click", (e) => {
+                const openBtn = e.target.closest("button[data-open]");
+                if (openBtn)
+                    return openProfile(openBtn.getAttribute("data-open"));
+
+                const delBtn = e.target.closest("button[data-del]");
+                if (delBtn)
+                    return deleteProfile(delBtn.getAttribute("data-del"));
+            });
+
+            document.addEventListener("change", (e) => {
+                const sel = e.target.closest("input[data-sel]");
+                if (!sel) return;
+                const name = sel.getAttribute("data-sel");
+                if (!name) return;
+                if (sel.checked) selectedProfiles.add(name);
+                else selectedProfiles.delete(name);
+                updateExportButton();
+            });
+
+            document
+                .getElementById("btnRefresh")
+                .addEventListener("click", () => refreshAll());
+            document.getElementById("btnAdd").addEventListener("click", () => {
+                document.getElementById("captureName").focus();
+                setStatus(
+                    "warn",
+                    "在右侧“保存账号”输入账号名，然后点“开始登录并保存”。",
+                );
+            });
+            document
+                .getElementById("btnOpenFolder")
+                .addEventListener("click", async () => {
+                    try {
+                        const r = await api.openProfilesFolder();
+                        if (r && r.success === false) {
+                            setStatus(
+                                "warn",
+                                "当前运行在网页模式，无法直接打开文件夹。",
+                            );
+                        } else {
+                            setStatus("ok", "已打开账号目录");
+                        }
+                    } catch {
+                        setStatus("warn", "无法打开账号目录");
+                    }
+                });
+            document
+                .getElementById("btnOpenDownloads")
+                .addEventListener("click", async () => {
+                    try {
+                        const r = await api.openDownloadsFolder();
+                        if (r && r.success === false) {
+                            setStatus(
+                                "warn",
+                                "当前运行在网页模式，无法直接打开文件夹。",
+                            );
+                        } else {
+                            setStatus("ok", "已打开下载目录");
+                        }
+                    } catch {
+                        setStatus("warn", "无法打开下载目录");
+                    }
+                });
+
+            document
+                .getElementById("btnServerSettings")
+                .addEventListener("click", () => openServerOverlay());
+            document
+                .getElementById("btnSrvClose")
+                .addEventListener("click", () => closeServerOverlay());
+            document
+                .getElementById("btnSrvSave")
+                .addEventListener("click", () => saveServerUrl());
+            document.getElementById("srvUrl")?.addEventListener("keydown", (e) => {
+                if (e.key === "Enter") saveServerUrl();
+                if (e.key === "Escape") closeServerOverlay();
+            });
+            document
+                .getElementById("serverOverlay")
+                ?.addEventListener("click", (e) => {
+                    if (e.target && e.target.id === "serverOverlay")
+                        closeServerOverlay();
+                });
+
+            document
+                .getElementById("btnSync")
+                .addEventListener("click", async () => {
+                    try {
+                        setStatus("warn", "正在同步账号…", { autoHideMs: 0 });
+                        const r = await api.syncDeviceProfiles();
+                        if (r && r.success === false) {
+                            setStatus(
+                                "warn",
+                                r.error || "当前运行在网页模式，无法同步账号。",
+                                { autoHideMs: 8000 },
+                            );
+                            return;
+                        }
+                        setStatus(
+                            "ok",
+                            `同步完成：下载 ${r.downloaded || 0}，移除 ${r.removed || 0}。`,
+                            { autoHideMs: 9000 },
+                        );
+                        await refreshAll({ silent: true });
+                    } catch (err) {
+                        setStatus("err", err.message || "同步失败", {
+                            autoHideMs: 9000,
+                        });
+                    }
+                });
+            document
+                .getElementById("btnChangeDownloads")
+                .addEventListener("click", async () => {
+                    try {
+                        const r = await api.chooseDownloadsFolder();
+                        if (r && r.success === false) {
+                            setStatus(
+                                "warn",
+                                "当前运行在网页模式，无法选择下载目录。",
+                            );
+                            return;
+                        }
+                        if (r && r.canceled) {
+                            setStatus("warn", "已取消更改下载目录", {
+                                autoHideMs: 2500,
+                            });
+                            return;
+                        }
+                        await refreshAll({ silent: true });
+                        setStatus(
+                            "ok",
+                            `下载目录已更新：${r.downloadsDir || "—"}`,
+                            { autoHideMs: 6500 },
+                        );
+                    } catch (err) {
+                        setStatus("err", err.message || "更改失败", {
+                            autoHideMs: 8000,
+                        });
+                    }
+                });
+
+            document
+                .getElementById("btnResetDownloads")
+                .addEventListener("click", async () => {
+                    try {
+                        const r = await api.resetDownloadsFolder();
+                        if (r && r.success === false) {
+                            setStatus(
+                                "warn",
+                                "当前运行在网页模式，无法重置下载目录。",
+                            );
+                            return;
+                        }
+                        await refreshAll({ silent: true });
+                        setStatus("ok", "已恢复默认下载目录", {
+                            autoHideMs: 5000,
+                        });
+                    } catch (err) {
+                        setStatus("err", err.message || "重置失败", {
+                            autoHideMs: 8000,
+                        });
+                    }
+                });
+
+            async function copyText(text) {
+                try {
+                    await navigator.clipboard.writeText(String(text || ""));
+                    return true;
+                } catch {
+                    return false;
+                }
+            }
+
+            document
+                .getElementById("btnCopyServer")
+                .addEventListener("click", async () => {
+                    const text =
+                        document.getElementById("actServerUrl").value || "";
+                    if (await copyText(text))
+                        setStatus("ok", "已复制服务地址", {
+                            elId: "actStatus",
+                            autoHideMs: 2500,
+                        });
+                    else
+                        setStatus("warn", "无法访问剪贴板，请手动复制", {
+                            elId: "actStatus",
+                            autoHideMs: 5000,
+                        });
+                });
+
+            document
+                .getElementById("btnActivate")
+                .addEventListener("click", async () => {
+                    try {
+                        const code =
+                            document.getElementById("actCode").value || "";
+                        const serverUrl =
+                            document.getElementById("actServerUrl").value || "";
+                        setStatus("warn", "正在激活…", {
+                            elId: "actStatus",
+                            autoHideMs: 0,
+                        });
+                        const r = await api.activateDevice(code, serverUrl);
+                        if (r && r.success === false) {
+                            setStatus(
+                                "err",
+                                r.error || "激活失败",
+                                { elId: "actStatus", autoHideMs: 9000 },
+                            );
+                            return;
+                        }
+                        setStatus("warn", "激活成功，正在更新…", {
+                            elId: "actStatus",
+                            autoHideMs: 0,
+                        });
+                        await api.syncDeviceProfiles();
+                        setStatus("ok", "已激活", {
+                            elId: "actStatus",
+                            autoHideMs: 3500,
+                        });
+                        await refreshAll({ silent: true });
+                    } catch (err) {
+                        setStatus("err", err.message || "激活失败", {
+                            elId: "actStatus",
+                            autoHideMs: 9000,
+                        });
+                    }
+                });
+
+            document
+                .getElementById("btnActRefresh")
+                .addEventListener("click", async () => {
+                    await refreshAll();
+                });
+            document
+                .getElementById("btnImport")
+                .addEventListener("click", async () => {
+                    try {
+                        setStatus(
+                            "warn",
+                            "请选择包含 *.json 的账号文件夹...",
+                            { autoHideMs: 0 },
+                        );
+                        const r = await api.importProfiles();
+                        if (r && r.success === false) {
+                            setStatus(
+                                "warn",
+                                "当前运行在网页模式，无法弹出导入窗口。请把 JSON 放到上方“账号目录”。",
+                                {
+                                    autoHideMs: 9000,
+                                },
+                            );
+                            return;
+                        }
+                        const imported = r.imported ?? 0;
+                        const skipped = r.skipped ?? 0;
+                        const where = r.dstDir
+                            ? `（已复制到：${r.dstDir}）`
+                            : "";
+                        if (imported > 0)
+                            setStatus(
+                                "ok",
+                                `导入完成：新增 ${imported} 个，跳过 ${skipped} 个。${where}`,
+                                { autoHideMs: 9000 },
+                            );
+                        else
+                            setStatus(
+                                "warn",
+                                `未导入任何账号：跳过 ${skipped} 个。${where}`,
+                                { autoHideMs: 9000 },
+                            );
+                        await refreshAll({ silent: true });
+                    } catch (err) {
+                        setStatus("err", err.message || "导入失败", {
+                            autoHideMs: 9000,
+                        });
+                    }
+                });
+            document
+                .getElementById("btnExport")
+                .addEventListener("click", async () => {
+                    try {
+                        const names = Array.from(selectedProfiles);
+                        const isSelectedMode = names.length > 0;
+                        setStatus(
+                            "warn",
+                            isSelectedMode
+                                ? `请选择导出目录（将导出 ${names.length} 个）...`
+                                : "请选择导出目录...",
+                            { autoHideMs: 0 },
+                        );
+                        const r = isSelectedMode
+                            ? await api.exportProfiles(names)
+                            : await api.exportProfiles();
+                        if (r && r.success === false) {
+                            setStatus(
+                                "warn",
+                                isSelectedMode
+                                    ? "当前运行在网页模式，请直接复制上方“账号目录”下选中的 *.json 文件。"
+                                    : "当前运行在网页模式，请直接复制上方“账号目录”下的 *.json 文件。",
+                                {
+                                    autoHideMs: 9000,
+                                },
+                            );
+                            return;
+                        }
+                        const exported = r.exported ?? 0;
+                        if (!r.dstDir) {
+                            setStatus("warn", "已取消导出", {
+                                autoHideMs: 3000,
+                            });
+                            return;
+                        }
+                        if (isSelectedMode) {
+                            const extra = [];
+                            if (r.missing) extra.push(`缺失 ${r.missing}`);
+                            if (r.invalid) extra.push(`非法名称 ${r.invalid}`);
+                            const tail = extra.length ? `（${extra.join("，")}）` : "";
+                            setStatus(
+                                "ok",
+                                `导出完成：${exported} 个文件${tail}。目录：${r.dstDir}`,
+                                { autoHideMs: 10000 },
+                            );
+                        } else {
+                            setStatus(
+                                "ok",
+                                `导出完成：${exported} 个文件。目录：${r.dstDir}`,
+                                { autoHideMs: 10000 },
+                            );
+                        }
+                    } catch (err) {
+                        setStatus("err", err.message || "导出失败", {
+                            autoHideMs: 9000,
+                        });
+                    }
+                });
+
+            document
+                .getElementById("btnCloseFlow")
+                .addEventListener("click", async () => {
+                    try {
+                        setStatus("warn", "正在关闭 Flow 窗口...", {
+                            autoHideMs: 0,
+                        });
+                        await api.closeFlowWindow();
+                        await refreshAll({ silent: true });
+                        setStatus("ok", "已关闭 Flow 窗口");
+                    } catch (err) {
+                        setStatus("err", err.message || "关闭失败", {
+                            autoHideMs: 8000,
+                        });
+                    }
+                });
+            document
+                .getElementById("btnQuitBrowser")
+                .addEventListener("click", async () => {
+                    try {
+                        setStatus("warn", "正在退出浏览器进程...", {
+                            autoHideMs: 0,
+                        });
+                        await api.quitBrowser();
+                        await refreshAll({ silent: true });
+                        setStatus("ok", "已退出浏览器进程");
+                    } catch (err) {
+                        setStatus("err", err.message || "退出失败", {
+                            autoHideMs: 8000,
+                        });
+                    }
+                });
+
+            document
+                .getElementById("btnCaptureStart")
+                .addEventListener("click", startCapture);
+            document
+                .getElementById("btnCaptureFinish")
+                .addEventListener("click", finishCapture);
+            document
+                .getElementById("btnCaptureCancel")
+                .addEventListener("click", cancelCapture);
+
+            document
+                .getElementById("search")
+                .addEventListener("input", async (e) => {
+                    await refreshAll({ silent: true });
+                });
+
+            document
+                .getElementById("captureName")
+                .addEventListener("keydown", (e) => {
+                    if (e.key === "Enter") startCapture();
+                });
+
+            window.addEventListener("load", async () => {
+                await refreshAll({ silent: true });
+                updateExportButton();
+                setInterval(() => refreshAll({ silent: true }), 3500);
+            });
+        </script>
+    </body>
+</html>

@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# Local profiles / sensitive state
+profiles/*.json
+profiles/**/*.json
+
+# Runtime artifacts
+runtime/
+tmp/
+

@@ -1,0 +1,88 @@
+{
+  "name": "flow-multi-account",
+  "version": "1.0.0",
+  "description": "Flow 多账号管理器（桌面应用 + 独立会话隔离）",
+  "author": "Flow Team",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "start:web": "node server.js",
+    "save": "node save-profile.js",
+    "gen:icon": "node scripts/generate-icon.js",
+    "dist": "npm run gen:icon && node scripts/dist.js",
+    "dist:dir": "npm run gen:icon && node scripts/dist.js --dir",
+    "dist:compat": "npm run gen:icon && node scripts/dist.js -c.win.signAndEditExecutable=false"
+  },
+  "dependencies": {
+    "electron-updater": "^6.6.2",
+    "express": "^4.19.2",
+    "playwright-core": "^1.48.0"
+  },
+  "devDependencies": {
+    "electron": "^31.4.0",
+    "electron-builder": "^24.13.3",
+    "pngjs": "^7.0.0"
+  },
+  "build": {
+    "appId": "com.internal.flow-multi-account",
+    "productName": "Flow 多账号管理器",
+    "icon": "build/icon.png",
+    "compression": "maximum",
+    "electronLanguages": ["zh-CN", "en-US"],
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**",
+      "core/**",
+      "bin/**",
+      "public/**",
+      "build/**",
+      "browser.js",
+      "screen.js",
+      "package.json",
+      "!dist/**",
+      "!profiles/**"
+      ,
+      "!**/*.map",
+      "!**/*.md",
+      "!**/.DS_Store",
+      "!scripts/**",
+      "!save-profile.js",
+      "!server.js"
+    ],
+    "asarUnpack": [
+      "bin/**"
+    ],
+    "mac": {
+      "icon": "build/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false,
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "wenhpoe",
+        "repo": "flow-multi-account",
+        "releaseType": "release"
+      }
+    ]
+  }
+}
