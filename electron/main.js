@@ -20,6 +20,9 @@ const ICON_PATH = process.platform === 'win32' ? ICON_ICO : ICON_PNG;
 app.setName(APP_NAME);
 if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
 
+let autoUpdateCtl = null;
+let autoUpdateState = { state: 'idle', updatedAt: null, logPath: null };
+
 function setupAutoUpdate(mainWindow) {
   if (!app.isPackaged) return;
   if (process.env.FMA_AUTO_UPDATE === '0') return;
@@ -43,6 +46,8 @@ function setupAutoUpdate(mainWindow) {
     }
   })();
 
+  autoUpdateState = { state: 'idle', updatedAt: null, logPath };
+
   const log = (line) => {
     const msg = `[${new Date().toISOString()}] ${String(line || '').trim()}\n`;
     try {
@@ -53,6 +58,11 @@ function setupAutoUpdate(mainWindow) {
   };
 
   const sendStatus = (status) => {
+    try {
+      autoUpdateState = { ...autoUpdateState, ...status, updatedAt: new Date().toISOString() };
+    } catch {
+      // ignore
+    }
     try {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('app:updateStatus', status);
@@ -149,6 +159,32 @@ function setupAutoUpdate(mainWindow) {
     log(`checkForUpdates failed: ${e?.message || e}`);
     console.warn(`⚠️ 自动更新检查失败：${e?.message || e}`);
   });
+
+  autoUpdateCtl = {
+    check: async ({ allowPrerelease = false } = {}) => {
+      try {
+        autoUpdater.allowPrerelease = allowPrerelease === true;
+      } catch {
+        // ignore
+      }
+      await autoUpdater.checkForUpdates();
+      return { ok: true };
+    },
+    install: async () => {
+      try {
+        autoUpdater.quitAndInstall();
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e?.message || String(e) };
+      }
+    },
+    openLog: async () => {
+      if (!logPath) return { ok: false, error: 'log path unavailable' };
+      await shell.openPath(logPath);
+      return { ok: true, logPath };
+    },
+    state: () => autoUpdateState
+  };
 }
 
 function createMainWindow() {
@@ -391,6 +427,10 @@ ipcMain.handle('capture:cancel', async () => {
 });
 
 ipcMain.handle('app:status', async () => ({
+  appVersion: app.getVersion(),
+  isPackaged: app.isPackaged,
+  platform: process.platform,
+  update: autoUpdateCtl ? autoUpdateCtl.state() : autoUpdateState,
   flow: flowWindow.getFlowState({
     includeProxyDebug: process.env.FMA_PROXY_LOG_CREDENTIALS === '1' || process.env.FMA_PROXY_DEBUG === '1'
   }),
@@ -404,6 +444,27 @@ ipcMain.handle('app:status', async () => ({
     activated: deviceState.isActivated()
   }
 }));
+
+ipcMain.handle('update:check', async (_evt, opts) => {
+  if (!autoUpdateCtl) return { ok: false, error: 'auto update not available' };
+  try {
+    return await autoUpdateCtl.check(opts && typeof opts === 'object' ? opts : {});
+  } catch (e) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+});
+ipcMain.handle('update:install', async () => {
+  if (!autoUpdateCtl) return { ok: false, error: 'auto update not available' };
+  return autoUpdateCtl.install();
+});
+ipcMain.handle('update:openLog', async () => {
+  if (!autoUpdateCtl) return { ok: false, error: 'auto update not available' };
+  try {
+    return await autoUpdateCtl.openLog();
+  } catch (e) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+});
 
 ipcMain.handle('app:openProfilesFolder', async () => {
   const dir = profiles.getProfilesDir();

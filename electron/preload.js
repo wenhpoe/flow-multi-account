@@ -11,6 +11,15 @@ contextBridge.exposeInMainWorld('flowApi', {
   focusFlowSession: (sessionId) => ipcRenderer.invoke('flow:focusSession', sessionId),
   quitBrowser: () => ipcRenderer.invoke('flow:quit'),
   getStatus: () => ipcRenderer.invoke('app:status'),
+  checkUpdate: (opts) => ipcRenderer.invoke('update:check', opts || {}),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  openUpdateLog: () => ipcRenderer.invoke('update:openLog'),
+  onUpdateStatus: (cb) => {
+    if (typeof cb !== 'function') return () => {};
+    const fn = (_evt, status) => cb(status);
+    ipcRenderer.on('app:updateStatus', fn);
+    return () => ipcRenderer.removeListener('app:updateStatus', fn);
+  },
   startCapture: (name) => ipcRenderer.invoke('capture:start', name),
   finishCapture: () => ipcRenderer.invoke('capture:finish'),
   cancelCapture: () => ipcRenderer.invoke('capture:cancel'),

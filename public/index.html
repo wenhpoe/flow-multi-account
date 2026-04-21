@@ -991,6 +991,53 @@
             </div>
         </div>
 
+        <div class="overlay" id="appOverlay" hidden>
+            <div class="overlay-card" aria-label="软件设置">
+                <div class="overlay-h">
+                    <h2>软件设置</h2>
+                    <span class="pill" title="更新">
+                        <span class="led" aria-hidden="true"></span>
+                        <span id="updatePillText">更新未检测</span>
+                    </span>
+                </div>
+                <div class="overlay-b">
+                    <div class="panel" style="margin: 0">
+                        <h3 style="margin-top: 0">自动更新</h3>
+                        <div class="kv2" style="margin-top: 10px">
+                            <div class="k">当前版本</div>
+                            <div class="v"><span class="path" id="appVersion">—</span></div>
+                            <div class="k">打包模式</div>
+                            <div class="v"><span class="path" id="appPackaged">—</span></div>
+                            <div class="k">更新状态</div>
+                            <div class="v"><span class="path" id="updateState">—</span></div>
+                            <div class="k">更新日志</div>
+                            <div class="v"><span class="path" id="updateLogPath">—</span></div>
+                        </div>
+                        <div style="height: 10px"></div>
+                        <div class="row">
+                            <button class="btn-primary" id="btnUpdateCheck">
+                                检查更新
+                            </button>
+                            <button class="btn-primary" id="btnUpdateInstall" hidden>
+                                重启并更新
+                            </button>
+                            <button class="btn-ghost" id="btnUpdateOpenLog">
+                                打开更新日志
+                            </button>
+                            <button class="btn-ghost" id="btnAppClose">
+                                关闭
+                            </button>
+                        </div>
+                        <div class="status" id="appStatus" hidden></div>
+                        <div class="hint" style="margin-top: 10px">
+                            说明：自动更新只对“安装版/打包版”生效；若你正在从 dmg
+                            里直接运行（未拖到“应用程序”），macOS 可能无法更新。
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="app">
             <section class="card sidebar" aria-label="账号列表">
                 <div class="brand">
@@ -1082,6 +1129,9 @@
                         </button>
                         <button class="btn-ghost" id="btnServerSettings">
                             服务设置
+                        </button>
+                        <button class="btn-ghost" id="btnAppSettings">
+                            软件设置
                         </button>
                         <button class="btn-ghost" id="btnSync">
                             同步账号
@@ -1220,6 +1270,10 @@
                 api.syncDeviceProfiles = window.flowApi.syncDeviceProfiles;
                 api.closeFlowSession = window.flowApi.closeFlowSession;
                 api.focusFlowSession = window.flowApi.focusFlowSession;
+                api.checkUpdate = window.flowApi.checkUpdate;
+                api.installUpdate = window.flowApi.installUpdate;
+                api.openUpdateLog = window.flowApi.openUpdateLog;
+                api.onUpdateStatus = window.flowApi.onUpdateStatus;
             }
 
             let statusTimer = null;
@@ -1325,6 +1379,65 @@
                 if (!ov) return;
                 ov.hidden = true;
                 setStatus("", "", { elId: "srvStatus" });
+            }
+
+            let lastUpdateStatus = null;
+
+            function updateStateText(s) {
+                const st = String(s || "").trim();
+                if (!st) return "—";
+                if (st === "idle") return "未检查";
+                if (st === "checking") return "检查中…";
+                if (st === "available") return "发现新版本，下载中…";
+                if (st === "downloading") return "下载中…";
+                if (st === "downloaded") return "已下载，等待重启更新";
+                if (st === "none") return "已是最新版本";
+                if (st === "error") return "更新失败（查看日志）";
+                return st;
+            }
+
+            function renderUpdateOverlay(status) {
+                if (!status) return;
+                const v = status?.appVersion || "—";
+                const packaged = status?.isPackaged ? "是" : "否（开发/网页模式）";
+                const elV = document.getElementById("appVersion");
+                const elP = document.getElementById("appPackaged");
+                if (elV) elV.textContent = v;
+                if (elP) elP.textContent = packaged;
+
+                const upd = status?.update || null;
+                const merged = {
+                    ...(upd && typeof upd === "object" ? upd : {}),
+                    ...(lastUpdateStatus && typeof lastUpdateStatus === "object"
+                        ? lastUpdateStatus
+                        : {}),
+                };
+                const st = merged?.state || merged?.status || "";
+
+                const elS = document.getElementById("updateState");
+                if (elS) elS.textContent = updateStateText(st);
+                const elL = document.getElementById("updateLogPath");
+                if (elL) elL.textContent = merged?.logPath || upd?.logPath || "—";
+                const pillText = document.getElementById("updatePillText");
+                if (pillText) pillText.textContent = updateStateText(st);
+
+                const btnInstall = document.getElementById("btnUpdateInstall");
+                if (btnInstall) btnInstall.hidden = st !== "downloaded";
+            }
+
+            function openAppOverlay() {
+                const ov = document.getElementById("appOverlay");
+                if (!ov) return;
+                ov.hidden = false;
+                setStatus("", "", { elId: "appStatus" });
+                refreshAll({ silent: true }).catch(() => {});
+            }
+
+            function closeAppOverlay() {
+                const ov = document.getElementById("appOverlay");
+                if (!ov) return;
+                ov.hidden = true;
+                setStatus("", "", { elId: "appStatus" });
             }
 
             async function saveServerUrl() {
@@ -1658,6 +1771,9 @@
                     if (status.downloadsDir)
                         document.getElementById("downloadsPath").textContent =
                             status.downloadsDir;
+                    try {
+                        renderUpdateOverlay(status);
+                    } catch {}
 
                     const browserOn = Boolean(flow?.hasBrowser);
                     const sessionsList = Array.isArray(flow?.sessions)
@@ -1967,8 +2083,14 @@
                 .getElementById("btnServerSettings")
                 .addEventListener("click", () => openServerOverlay());
             document
+                .getElementById("btnAppSettings")
+                .addEventListener("click", () => openAppOverlay());
+            document
                 .getElementById("btnSrvClose")
                 .addEventListener("click", () => closeServerOverlay());
+            document
+                .getElementById("btnAppClose")
+                .addEventListener("click", () => closeAppOverlay());
             document
                 .getElementById("btnSrvSave")
                 .addEventListener("click", () => saveServerUrl());
@@ -1981,6 +2103,104 @@
                 ?.addEventListener("click", (e) => {
                     if (e.target && e.target.id === "serverOverlay")
                         closeServerOverlay();
+                });
+            document
+                .getElementById("appOverlay")
+                ?.addEventListener("click", (e) => {
+                    if (e.target && e.target.id === "appOverlay") closeAppOverlay();
+                });
+
+            document
+                .getElementById("btnUpdateCheck")
+                .addEventListener("click", async () => {
+                    try {
+                        if (typeof api.checkUpdate !== "function") {
+                            setStatus(
+                                "warn",
+                                "当前运行在网页模式，无法检查更新（请使用安装版应用）。",
+                                { elId: "appStatus", autoHideMs: 9000 },
+                            );
+                            return;
+                        }
+                        setStatus("warn", "正在检查更新…", {
+                            elId: "appStatus",
+                            autoHideMs: 0,
+                        });
+                        const r = await api.checkUpdate({ allowPrerelease: false });
+                        if (r && r.ok === false) {
+                            setStatus("err", r.error || "检查失败", {
+                                elId: "appStatus",
+                                autoHideMs: 9000,
+                            });
+                            return;
+                        }
+                        setStatus("ok", "已触发检查（如有更新将自动下载）", {
+                            elId: "appStatus",
+                            autoHideMs: 3500,
+                        });
+                    } catch (e) {
+                        setStatus("err", e.message || "检查失败", {
+                            elId: "appStatus",
+                            autoHideMs: 9000,
+                        });
+                    }
+                });
+            document
+                .getElementById("btnUpdateInstall")
+                .addEventListener("click", async () => {
+                    try {
+                        if (typeof api.installUpdate !== "function") {
+                            setStatus(
+                                "warn",
+                                "当前运行在网页模式，无法执行更新（请使用安装版应用）。",
+                                { elId: "appStatus", autoHideMs: 9000 },
+                            );
+                            return;
+                        }
+                        const r = await api.installUpdate();
+                        if (r && r.ok === false) {
+                            setStatus("err", r.error || "更新失败", {
+                                elId: "appStatus",
+                                autoHideMs: 9000,
+                            });
+                        }
+                    } catch (e) {
+                        setStatus("err", e.message || "更新失败", {
+                            elId: "appStatus",
+                            autoHideMs: 9000,
+                        });
+                    }
+                });
+            document
+                .getElementById("btnUpdateOpenLog")
+                .addEventListener("click", async () => {
+                    try {
+                        if (typeof api.openUpdateLog !== "function") {
+                            setStatus(
+                                "warn",
+                                "当前运行在网页模式，无法打开更新日志（请使用安装版应用）。",
+                                { elId: "appStatus", autoHideMs: 9000 },
+                            );
+                            return;
+                        }
+                        const r = await api.openUpdateLog();
+                        if (r && r.ok === false) {
+                            setStatus("warn", r.error || "无法打开日志", {
+                                elId: "appStatus",
+                                autoHideMs: 9000,
+                            });
+                            return;
+                        }
+                        setStatus("ok", "已打开更新日志", {
+                            elId: "appStatus",
+                            autoHideMs: 2500,
+                        });
+                    } catch (e) {
+                        setStatus("warn", e.message || "无法打开日志", {
+                            elId: "appStatus",
+                            autoHideMs: 9000,
+                        });
+                    }
                 });
 
             document
@@ -2294,6 +2514,13 @@
             window.addEventListener("load", async () => {
                 await refreshAll({ silent: true });
                 updateExportButton();
+                try {
+                    if (typeof api.onUpdateStatus === "function") {
+                        api.onUpdateStatus((s) => {
+                            lastUpdateStatus = s;
+                        });
+                    }
+                } catch {}
                 setInterval(() => refreshAll({ silent: true }), 3500);
             });
         </script>
