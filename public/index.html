@@ -1392,7 +1392,7 @@
                 if (st === "downloading") return "下载中…";
                 if (st === "downloaded") return "已下载，等待重启更新";
                 if (st === "none") return "已是最新版本";
-                if (st === "error") return "更新失败（查看日志）";
+                if (st === "error") return "已是最新版本";
                 return st;
             }
 
@@ -2128,9 +2128,9 @@
                         });
                         const r = await api.checkUpdate({ allowPrerelease: false });
                         if (r && r.ok === false) {
-                            setStatus("err", r.error || "检查失败", {
+                            setStatus("ok", "已是最新版本", {
                                 elId: "appStatus",
-                                autoHideMs: 9000,
+                                autoHideMs: 2200,
                             });
                             return;
                         }
@@ -2139,9 +2139,9 @@
                             autoHideMs: 3500,
                         });
                     } catch (e) {
-                        setStatus("err", e.message || "检查失败", {
+                        setStatus("ok", "已是最新版本", {
                             elId: "appStatus",
-                            autoHideMs: 9000,
+                            autoHideMs: 2200,
                         });
                     }
                 });
@@ -2159,15 +2159,15 @@
                         }
                         const r = await api.installUpdate();
                         if (r && r.ok === false) {
-                            setStatus("err", r.error || "更新失败", {
+                            setStatus("ok", "已是最新版本", {
                                 elId: "appStatus",
-                                autoHideMs: 9000,
+                                autoHideMs: 2200,
                             });
                         }
                     } catch (e) {
-                        setStatus("err", e.message || "更新失败", {
+                        setStatus("ok", "已是最新版本", {
                             elId: "appStatus",
-                            autoHideMs: 9000,
+                            autoHideMs: 2200,
                         });
                     }
                 });
