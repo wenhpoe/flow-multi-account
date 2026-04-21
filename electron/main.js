@@ -142,7 +142,7 @@ function setupAutoUpdate(mainWindow) {
         try {
           autoUpdater.quitAndInstall();
         } catch (e) {
-          dialog.showErrorBox('重启更新失败', String(e?.message || e));
+          log(`quitAndInstall failed: ${e?.message || e}`);
         }
       }
     } catch {
