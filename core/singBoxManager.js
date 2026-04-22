@@ -5,6 +5,7 @@ const net = require('net');
 const http = require('http');
 const https = require('https');
 const { spawn } = require('child_process');
+const { writeJsonAtomicSync } = require('./fsAtomic');
 
 let pluginStatus = {
   state: 'unknown', // unknown | checking | missing | downloading | ready | error
@@ -1209,7 +1210,7 @@ async function ensureRunningForNodeLink(nodeLink, { listenHost, listenPort } = {
   await assertPortFree({ host: built.listenHost, port: built.listenPort });
 
   const configPath = path.join(dir, `sing-box-${built.listenPort}.json`);
-  fs.writeFileSync(configPath, JSON.stringify(built.config, null, 2));
+  writeJsonAtomicSync(configPath, built.config);
 
   const args = ['run', '-c', configPath];
 

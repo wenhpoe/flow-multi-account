@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { writeJsonAtomicSync } = require('./fsAtomic');
 
 function isNoLocalProfiles() {
   const raw = String(process.env.FMA_NO_LOCAL_PROFILES || '').trim().toLowerCase();
@@ -158,7 +159,7 @@ function writeStorageState(profileName, storageState) {
   }
   const safeName = sanitizeProfileName(profileName);
   const filePath = profileFilePath(safeName);
-  fs.writeFileSync(filePath, JSON.stringify(storageState, null, 2));
+  writeJsonAtomicSync(filePath, storageState);
   return safeName;
 }
 

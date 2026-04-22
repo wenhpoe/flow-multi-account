@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { writeJsonAtomicSync } = require('./fsAtomic');
 
 function isElectronRuntime() {
   return Boolean(process.versions && process.versions.electron);
@@ -40,7 +41,7 @@ function writeSettings(patch) {
     fs.mkdirSync(dir, { recursive: true });
     const current = readSettings();
     const next = { ...current, ...patch };
-    fs.writeFileSync(file, JSON.stringify(next, null, 2));
+    writeJsonAtomicSync(file, next);
     return true;
   } catch {
     return false;
@@ -68,7 +69,7 @@ function clearDownloadsDir() {
   if (!file) return false;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(next, null, 2));
+    writeJsonAtomicSync(file, next);
     return true;
   } catch {
     return false;

@@ -3,6 +3,7 @@ const path = require('path');
 
 const controlPlane = require('./controlPlane');
 const deviceState = require('./deviceState');
+const { writeJsonAtomicSync } = require('./fsAtomic');
 
 function authHeaders() {
   const s = deviceState.readDeviceState();
@@ -103,7 +104,7 @@ async function fullSyncToDir(dstDir, { removeExtra = true } = {}) {
   let downloaded = 0;
   for (const name of allowedNames) {
     const storageState = await downloadProfileStorageState(name);
-    fs.writeFileSync(path.join(dstDir, `${name}.json`), JSON.stringify(storageState, null, 2));
+    writeJsonAtomicSync(path.join(dstDir, `${name}.json`), storageState);
     downloaded += 1;
   }
 

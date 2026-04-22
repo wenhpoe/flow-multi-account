@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { writeJsonAtomicSync } = require('./fsAtomic');
 
 function isElectronRuntime() {
   return Boolean(process.versions && process.versions.electron);
@@ -46,7 +47,7 @@ function readDeviceState() {
     if (!fs.existsSync(fp)) {
       const machineId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
       const init = { ...base, machineId };
-      fs.writeFileSync(fp, JSON.stringify(init, null, 2));
+      writeJsonAtomicSync(fp, init);
       return init;
     }
     const raw = fs.readFileSync(fp, 'utf8');
@@ -63,7 +64,7 @@ function readDeviceState() {
     const machineId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
     const init = { ...base, machineId };
     try {
-      fs.writeFileSync(fp, JSON.stringify(init, null, 2));
+      writeJsonAtomicSync(fp, init);
     } catch {
       // ignore
     }
@@ -80,7 +81,7 @@ function writeDeviceState(patch) {
   if (next.allowedProfiles && Array.isArray(next.allowedProfiles)) {
     next.allowedProfiles = next.allowedProfiles.map((s) => String(s).trim()).filter(Boolean);
   }
-  fs.writeFileSync(fp, JSON.stringify(next, null, 2));
+  writeJsonAtomicSync(fp, next);
   return next;
 }
 
