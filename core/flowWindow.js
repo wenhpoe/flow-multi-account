@@ -220,7 +220,17 @@ async function openFlowWithProfile(profileName) {
       if (r?.policyNoAvailable) {
         const items = typeof r?.policyItems === 'number' ? r.policyItems : null;
         const enabled = typeof r?.policyEnabled === 'number' ? r.policyEnabled : null;
-        const w = `账号代理策略无可用条目（已绑定 ${items ?? '?'} 条，可用 ${enabled ?? 0} 条）：将直连打开（有风控风险，建议到管理端启用/替换该账号的代理条目）`;
+        const missing = typeof r?.policyMissing === 'number' ? r.policyMissing : null;
+        const disabled = typeof r?.policyDisabled === 'number' ? r.policyDisabled : null;
+        const unusable = typeof r?.policyUnusable === 'number' ? r.policyUnusable : null;
+        const extra = [
+          missing != null ? `缺失 ${missing}` : null,
+          disabled != null ? `已禁用 ${disabled}` : null,
+          unusable != null ? `不可用 ${unusable}` : null,
+        ]
+          .filter(Boolean)
+          .join('，');
+        const w = `账号代理策略无可用条目（已绑定 ${items ?? '?'} 条，可用 ${enabled ?? 0} 条${extra ? `；${extra}` : ''}）：将直连打开（有风控风险，建议到管理端启用/替换该账号的代理条目）`;
         proxyWarning = proxyWarning ? `${proxyWarning}\n${w}` : w;
         console.warn(`⚠️ ${w}`);
       }

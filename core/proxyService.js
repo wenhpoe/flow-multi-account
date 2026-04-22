@@ -183,6 +183,9 @@ async function getProxyForProfile(profileName) {
     policyNoAvailable: data?.policyNoAvailable === true,
     policyItems: typeof data?.policyItems === 'number' ? data.policyItems : null,
     policyEnabled: typeof data?.policyEnabled === 'number' ? data.policyEnabled : null,
+    policyMissing: typeof data?.policyMissing === 'number' ? data.policyMissing : null,
+    policyDisabled: typeof data?.policyDisabled === 'number' ? data.policyDisabled : null,
+    policyUnusable: typeof data?.policyUnusable === 'number' ? data.policyUnusable : null,
   };
 }
 
