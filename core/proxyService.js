@@ -6,7 +6,7 @@ function normalizeProxy(proxy) {
   if (typeof proxy === 'string') {
     const v = proxy.trim();
     if (!v) return null;
-    if (/^(vless|hysteria2):\/\//i.test(v)) return null;
+    if (/^(vless|hysteria2|vmess):\/\//i.test(v)) return null;
     // Support vendor format: "host:port:username:password"
     // (password may contain ':')
     if (!v.includes('://')) {
@@ -40,7 +40,7 @@ function normalizeProxy(proxy) {
 
 function isNodeLink(link) {
   const s = String(link || '').trim();
-  return s.startsWith('vless://') || s.startsWith('hysteria2://');
+  return s.startsWith('vless://') || s.startsWith('hysteria2://') || s.startsWith('vmess://');
 }
 
 function buildNodeLinkFromObject(node) {
