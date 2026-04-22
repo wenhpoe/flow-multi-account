@@ -690,8 +690,10 @@
 
             .sessions {
                 display: grid;
-                gap: 10px;
+                grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+                gap: 12px;
                 margin-top: 12px;
+                align-items: stretch;
             }
 
             .session-card {
