@@ -483,6 +483,20 @@ ipcMain.handle('app:openDownloadsFolder', async () => {
   return { success: true };
 });
 
+ipcMain.handle('app:openExternal', async (_evt, url) => {
+  const raw = String(url || '').trim();
+  if (!raw) throw new Error('url required');
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new Error('invalid url');
+  }
+  if (!/^https?:$/.test(u.protocol)) throw new Error('only http/https is allowed');
+  await shell.openExternal(u.toString());
+  return { success: true };
+});
+
 ipcMain.handle('device:activate', async (_evt, payload) => {
   const s = deviceState.readDeviceState();
   const activationCode = String(payload?.activationCode || '').trim();

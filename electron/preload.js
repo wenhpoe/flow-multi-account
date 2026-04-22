@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('flowApi', {
   cancelCapture: () => ipcRenderer.invoke('capture:cancel'),
   openProfilesFolder: () => ipcRenderer.invoke('app:openProfilesFolder'),
   openDownloadsFolder: () => ipcRenderer.invoke('app:openDownloadsFolder'),
+  openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
   chooseDownloadsFolder: () => ipcRenderer.invoke('app:chooseDownloadsFolder'),
   resetDownloadsFolder: () => ipcRenderer.invoke('app:resetDownloadsFolder'),
   activateDevice: (activationCode, serverUrl) =>

@@ -265,6 +265,16 @@
                 color: var(--ink2);
                 font-size: 12px;
                 line-height: 1.35;
+            }
+
+            .proxy-actions {
+                display: flex;
+                gap: 8px;
+                flex-wrap: wrap;
+                margin-bottom: 8px;
+            }
+
+            .proxy-lines {
                 white-space: pre-wrap;
             }
 
@@ -440,6 +450,19 @@
             }
             .btn-ghost:hover {
                 background: rgba(255, 255, 255, 0.72);
+                box-shadow:
+                    0 1px 0 rgba(255, 255, 255, 0.65) inset,
+                    0 10px 18px rgba(12, 12, 12, 0.08);
+            }
+
+            .btn-xs {
+                padding: 6px 9px;
+                border-radius: 12px;
+                font-size: 12px;
+                box-shadow: none;
+            }
+            .btn-xs:hover {
+                transform: none;
                 box-shadow:
                     0 1px 0 rgba(255, 255, 255, 0.65) inset,
                     0 10px 18px rgba(12, 12, 12, 0.08);
@@ -1501,6 +1524,10 @@
                     return;
                 }
 
+                const baseUrl = String(deviceInfo?.serverUrl || "")
+                    .trim()
+                    .replace(/\/+$/, "");
+
                 for (const s of list) {
                     const id = String(s?.id || "");
                     const name = String(s?.profile || "—");
@@ -1584,6 +1611,45 @@
                     }
 
                     const detailText = detailsLines.filter(Boolean).join("\n");
+                    const poolLocateUrl =
+                        baseUrl && proxyId
+                            ? `${baseUrl}/?q=${encodeURIComponent(proxyId)}&focus=${encodeURIComponent(proxyId)}`
+                            : "";
+                    const nodeId = proxy?.nodeId ? String(proxy.nodeId) : "";
+                    const nodeLocateUrl =
+                        baseUrl && nodeId
+                            ? `${baseUrl}/nodes.html?q=${encodeURIComponent(nodeId)}&focus=${encodeURIComponent(
+                                  nodeId,
+                              )}`
+                            : "";
+
+                    const actionButtons = [];
+                    if (proxyId) {
+                        actionButtons.push(
+                            `<button class="btn-ghost btn-xs" data-copy-text="${esc(
+                                proxyId,
+                            )}" title="复制 poolItemId（可用于管理端搜索）">复制 poolItemId</button>`,
+                        );
+                    }
+                    if (poolLocateUrl) {
+                        actionButtons.push(
+                            `<button class="btn-ghost btn-xs" data-open-url="${esc(
+                                poolLocateUrl,
+                            )}" title="打开管理端并定位到该代理池条目">管理端定位</button>`,
+                        );
+                    }
+                    if (nodeLocateUrl) {
+                        actionButtons.push(
+                            `<button class="btn-ghost btn-xs" data-open-url="${esc(
+                                nodeLocateUrl,
+                            )}" title="打开管理端节点页并定位到该节点">定位节点</button>`,
+                        );
+                    }
+                    const actionsHtml = actionButtons.length
+                        ? `<div class="proxy-actions">${actionButtons.join(
+                              "",
+                          )}</div>`
+                        : "";
                     const proxyCell = proxy?.serverMasked
                         ? `
                           <details class="proxy-details">
@@ -1593,7 +1659,13 @@
                                 <span>${esc(proxyText)}</span>
                               </span>
                             </summary>
-                            ${detailText ? `<div class="proxy-body">${esc(detailText)}</div>` : ""}
+                            ${
+                                actionsHtml || detailText
+                                    ? `<div class="proxy-body">${actionsHtml}${
+                                          detailText ? `<div class="proxy-lines">${esc(detailText)}</div>` : ""
+                                      }</div>`
+                                    : ""
+                            }
                           </details>
                         `
                         : `<span>${esc(proxyText)}</span>`;
@@ -2024,6 +2096,31 @@
                 const delBtn = e.target.closest("button[data-del]");
                 if (delBtn)
                     return deleteProfile(delBtn.getAttribute("data-del"));
+
+                const copyBtn = e.target.closest("button[data-copy-text]");
+                if (copyBtn) {
+                    const text = copyBtn.getAttribute("data-copy-text") || "";
+                    copyText(text).then((ok) => {
+                        if (ok) setStatus("ok", "已复制", { autoHideMs: 1800 });
+                        else
+                            setStatus("warn", "无法访问剪贴板，请手动复制", {
+                                autoHideMs: 3500,
+                            });
+                    });
+                    return;
+                }
+
+                const openUrlBtn = e.target.closest("button[data-open-url]");
+                if (openUrlBtn) {
+                    const url = openUrlBtn.getAttribute("data-open-url") || "";
+                    openExternal(url).then((ok) => {
+                        if (!ok)
+                            setStatus("warn", "无法打开链接，请手动复制打开", {
+                                autoHideMs: 4500,
+                            });
+                    });
+                    return;
+                }
             });
 
             document.addEventListener("change", (e) => {
@@ -2288,6 +2385,25 @@
             async function copyText(text) {
                 try {
                     await navigator.clipboard.writeText(String(text || ""));
+                    return true;
+                } catch {
+                    return false;
+                }
+            }
+
+            async function openExternal(url) {
+                const u = String(url || "").trim();
+                if (!u) return false;
+                try {
+                    if (api && typeof api.openExternal === "function") {
+                        await api.openExternal(u);
+                        return true;
+                    }
+                } catch {
+                    // ignore and fall back
+                }
+                try {
+                    window.open(u, "_blank", "noopener,noreferrer");
                     return true;
                 } catch {
                     return false;
