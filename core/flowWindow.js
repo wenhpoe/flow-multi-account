@@ -6,6 +6,7 @@ const profiles = require('./profiles');
 const proxyForwarder = require('./proxyForwarder');
 const accountService = require('./accountService');
 const singBox = require('./singBoxManager');
+const deviceState = require('./deviceState');
 const time = require('./time');
 
 const FLOW_URL = 'https://labs.google/fx/tools/flow';
@@ -88,6 +89,32 @@ function singBoxListenPortBase() {
   return 53182;
 }
 
+function defaultExitIpCheckUrl() {
+  return (process.env.FMA_PROXY_EXIT_IP_URL || '').trim() || 'https://api.ipify.org?format=json';
+}
+
+function extractExitIp(text) {
+  const s = String(text || '').trim();
+  if (!s) return null;
+  try {
+    const obj = JSON.parse(s);
+    if (obj && typeof obj === 'object') {
+      const ip = String(obj.ip || obj.query || obj.address || '').trim();
+      if (ip) return ip.slice(0, 80);
+    }
+  } catch {
+    // ignore
+  }
+  const m4 = s.match(/\b(\d{1,3}\.){3}\d{1,3}\b/);
+  if (m4 && m4[0]) {
+    const parts = m4[0].split('.').map((n) => Number(n));
+    if (parts.length === 4 && parts.every((n) => Number.isFinite(n) && n >= 0 && n <= 255)) return m4[0];
+  }
+  const m6 = s.match(/\b([0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}\b/i);
+  if (m6 && m6[0]) return m6[0].slice(0, 80);
+  return null;
+}
+
 function buildSessionSummary(sess, { includeProxyDebug } = {}) {
   if (!sess) return null;
   return {
@@ -96,6 +123,8 @@ function buildSessionSummary(sess, { includeProxyDebug } = {}) {
     createdAt: sess.createdAt || null,
     proxy: sess.proxyMeta || null,
     warning: sess.warning || null,
+    notice: sess.notice || null,
+    ip: sess.ipMeta || null,
     proxyDebug: includeProxyDebug ? sess.proxyDebug || null : null,
   };
 }
@@ -313,6 +342,8 @@ async function openFlowWithProfile(profileName) {
       proxyMeta: null,
       proxyDebug: null,
       warning: proxyWarning || null,
+      notice: null,
+      ipMeta: null,
     };
 
     // Track the applied proxy (masked).
@@ -426,6 +457,38 @@ async function openFlowWithProfile(profileName) {
         const w = `代理连通性检查失败：${msg}（${preflightMethod} ${preflightUrl}，超时时间 ${ms}ms）`;
         sess.warning = sess.warning ? `${sess.warning}\n${w}` : w;
         console.warn(`⚠️ ${w}`);
+      }
+    }
+
+    // Optional: account-level exit IP tracking (silent; only shows notice on change).
+    if (proxyForContext && process.env.FMA_PROXY_EXIT_IP_CHECK !== '0') {
+      const ipUrl = defaultExitIpCheckUrl();
+      const rawMs = process.env.FMA_PROXY_EXIT_IP_TIMEOUT_MS ? Number(process.env.FMA_PROXY_EXIT_IP_TIMEOUT_MS) : 2500;
+      const ms = Number.isFinite(rawMs) ? Math.min(12000, Math.max(800, Math.floor(rawMs))) : 2500;
+      try {
+        const res = await ctx.request.fetch(ipUrl, { method: 'GET', timeout: ms });
+        if (res.ok()) {
+          const body = await res.text();
+          const ip = extractExitIp(body);
+          if (ip) {
+            const checkedAt = time.nowIso();
+            const dev = deviceState.readDeviceState();
+            const prevIp =
+              dev && dev.exitIpByProfile && dev.exitIpByProfile[safeName] && dev.exitIpByProfile[safeName].ip
+                ? String(dev.exitIpByProfile[safeName].ip)
+                : null;
+            const changed = !!prevIp && prevIp !== ip;
+            sess.ipMeta = { ip, prevIp, changed, checkedAt, url: ipUrl };
+            if (changed) sess.notice = `出口 IP 变化：${prevIp} → ${ip}`;
+
+            const nextMap =
+              dev && dev.exitIpByProfile && typeof dev.exitIpByProfile === 'object' ? { ...dev.exitIpByProfile } : {};
+            nextMap[safeName] = { ip, checkedAt };
+            deviceState.writeDeviceState({ exitIpByProfile: nextMap });
+          }
+        }
+      } catch {
+        // ignore (silent)
       }
     }
 

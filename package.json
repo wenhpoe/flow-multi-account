@@ -1,12 +1,12 @@
 {
   "name": "flow-multi-account",
-  "version": "1.4.7",
+  "version": "1.5.0",
   "description": "Flow 多账号管理器（桌面应用 + 独立会话隔离）",
   "author": "Flow Team",
   "private": true,
   "main": "electron/main.js",
   "scripts": {
-    "start": "electron .",
+    "start": "node scripts/start-dev.js",
     "start:web": "node server.js",
     "save": "node save-profile.js",
     "gen:icon": "node scripts/generate-icon.js",
@@ -40,10 +40,12 @@
       "output": "dist"
     },
     "files": [
+      ".env",
       "electron/**",
       "core/**",
       "bin/**",
       "public/**",
+      "oss_toolkit/**",
       "build/**",
       "browser.js",
       "screen.js",
@@ -58,7 +60,9 @@
       "!server.js"
     ],
     "asarUnpack": [
-      "bin/**"
+      "bin/**",
+      "core/python/**",
+      "oss_toolkit/**"
     ],
     "mac": {
       "icon": "build/icon.icns",

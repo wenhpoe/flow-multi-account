@@ -5,10 +5,56 @@ const controlPlane = require('./controlPlane');
 const deviceState = require('./deviceState');
 const { writeJsonAtomicSync } = require('./fsAtomic');
 
+const deviceValidationCache = {
+  key: '',
+  checkedAtMs: 0,
+  result: null,
+  promise: null,
+};
+
 function authHeaders() {
   const s = deviceState.readDeviceState();
   if (!s.token) throw new Error('设备未激活');
   return { Authorization: `Bearer ${s.token}` };
+}
+
+function invalidateDeviceValidation() {
+  deviceValidationCache.key = '';
+  deviceValidationCache.checkedAtMs = 0;
+  deviceValidationCache.result = null;
+  deviceValidationCache.promise = null;
+}
+
+function buildDeviceAccessResult({
+  state = 'activation-required',
+  canUseApp = false,
+  needsActivation = false,
+  message = '',
+  machineId = null,
+  serverUrl = null,
+  checkedAt = new Date().toISOString(),
+  localActivated = false,
+  serverValidated = false,
+  allowedProfiles = [],
+  activatedAt = null,
+  lastSeenAt = null,
+} = {}) {
+  return {
+    state,
+    canUseApp: Boolean(canUseApp),
+    needsActivation: Boolean(needsActivation),
+    message: String(message || '').trim() || null,
+    machineId: machineId ? String(machineId) : null,
+    serverUrl: serverUrl ? String(serverUrl) : null,
+    checkedAt: checkedAt || null,
+    localActivated: Boolean(localActivated),
+    serverValidated: Boolean(serverValidated),
+    allowedProfiles: Array.isArray(allowedProfiles)
+      ? allowedProfiles.map((s) => String(s).trim()).filter(Boolean)
+      : [],
+    activatedAt: activatedAt || null,
+    lastSeenAt: lastSeenAt || null,
+  };
 }
 
 async function fetchJson(url, { method = 'GET', headers = {}, body, timeoutMs = 8000 } = {}) {
@@ -28,6 +74,7 @@ async function fetchJson(url, { method = 'GET', headers = {}, body, timeoutMs = 
       } catch {
         // ignore
       }
+      invalidateDeviceValidation();
     }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -74,7 +121,122 @@ async function activateDevice({ machineId, activationCode, serverUrl }) {
   });
   if (!data?.token) throw new Error('激活失败：无 token');
   deviceState.writeDeviceState({ serverUrl: base, token: data.token });
+  invalidateDeviceValidation();
   return { machineId, serverUrl: base };
+}
+
+async function validateDeviceAccess({ force = false, maxAgeMs = 15000 } = {}) {
+  const s = deviceState.readDeviceState();
+  const machineId = String(s.machineId || '').trim() || null;
+  const serverUrl = deviceState.normalizeUrl(s.serverUrl || controlPlane.getBaseUrl());
+  const localActivated = Boolean(machineId && s.token);
+
+  if (!machineId) {
+    invalidateDeviceValidation();
+    return buildDeviceAccessResult({
+      state: 'activation-required',
+      canUseApp: false,
+      needsActivation: true,
+      message: '当前设备缺少机器码，请重启应用后重试。',
+      machineId: null,
+      serverUrl,
+      localActivated: false,
+    });
+  }
+
+  if (!localActivated) {
+    invalidateDeviceValidation();
+    return buildDeviceAccessResult({
+      state: 'activation-required',
+      canUseApp: false,
+      needsActivation: true,
+      message: '请输入激活码并完成校验后再进入主页。',
+      machineId,
+      serverUrl,
+      localActivated: false,
+    });
+  }
+
+  const cacheKey = `${machineId}:${String(s.token)}:${serverUrl}`;
+  if (!force && deviceValidationCache.promise && deviceValidationCache.key === cacheKey) {
+    return deviceValidationCache.promise;
+  }
+  if (
+    !force &&
+    deviceValidationCache.result &&
+    deviceValidationCache.key === cacheKey &&
+    Date.now() - deviceValidationCache.checkedAtMs < maxAgeMs
+  ) {
+    return deviceValidationCache.result;
+  }
+
+  deviceValidationCache.key = cacheKey;
+  let pending = null;
+  pending = (async () => {
+    try {
+      const data = await fetchJson(`${serverUrl}/v1/client/device`, {
+        headers: { ...authHeaders() },
+        timeoutMs: 6000,
+      });
+      const allowedProfiles = Array.isArray(data?.allowedProfiles)
+        ? data.allowedProfiles.map((item) => String(item).trim()).filter(Boolean)
+        : [];
+      try {
+        deviceState.writeDeviceState({ serverUrl, allowedProfiles });
+      } catch {
+        // ignore
+      }
+      const result = buildDeviceAccessResult({
+        state: 'active',
+        canUseApp: true,
+        needsActivation: false,
+        message: '设备已通过管理服务校验。',
+        machineId,
+        serverUrl,
+        localActivated: true,
+        serverValidated: true,
+        allowedProfiles,
+        activatedAt: data?.activatedAt || null,
+        lastSeenAt: data?.lastSeenAt || null,
+      });
+      deviceValidationCache.result = result;
+      deviceValidationCache.checkedAtMs = Date.now();
+      return result;
+    } catch (err) {
+      const latest = deviceState.readDeviceState();
+      const stillActivated = Boolean(latest.machineId && latest.token);
+      const result = stillActivated
+        ? buildDeviceAccessResult({
+            state: 'validation-error',
+            canUseApp: false,
+            needsActivation: false,
+            message: err?.message || '无法验证激活状态，请检查管理服务。',
+            machineId: latest.machineId || machineId,
+            serverUrl: deviceState.normalizeUrl(latest.serverUrl || serverUrl),
+            localActivated: true,
+            serverValidated: false,
+            allowedProfiles: latest.allowedProfiles || [],
+          })
+        : buildDeviceAccessResult({
+            state: 'activation-required',
+            canUseApp: false,
+            needsActivation: true,
+            message: '当前设备激活已失效，请重新输入激活码。',
+            machineId: latest.machineId || machineId,
+            serverUrl: deviceState.normalizeUrl(latest.serverUrl || serverUrl),
+            localActivated: false,
+            serverValidated: false,
+          });
+      deviceValidationCache.result = result;
+      deviceValidationCache.checkedAtMs = Date.now();
+      return result;
+    } finally {
+      if (deviceValidationCache.promise === pending) deviceValidationCache.promise = null;
+    }
+  })();
+
+  deviceValidationCache.promise = pending;
+  return pending;
 }
 
 async function listAllowedProfiles() {
@@ -130,7 +292,9 @@ async function fullSyncToDir(dstDir, { removeExtra = true } = {}) {
 
 module.exports = {
   activateDevice,
+  invalidateDeviceValidation,
   listAllowedProfiles,
   downloadProfileStorageState,
   fullSyncToDir,
+  validateDeviceAccess,
 };

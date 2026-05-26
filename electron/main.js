@@ -1,6 +1,7 @@
-const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
+require('../core/loadEnv')();
 
 const profiles = require('../core/profiles');
 const flowWindow = require('../core/flowWindow');
@@ -9,12 +10,31 @@ const downloads = require('../core/downloads');
 const deviceState = require('../core/deviceState');
 const accountService = require('../core/accountService');
 const singBox = require('../core/singBoxManager');
+const chatGeneration = require('../core/chatGeneration');
 
-const APP_NAME = 'Flow 多账号管理器';
+const APP_NAME = process.env.FMA_APP_NAME || 'Flow Studio (Dev)';
+const WINDOW_TITLE = process.env.FMA_WINDOW_TITLE || 'Flow Studio Control';
 const APP_ID = 'com.internal.flow-multi-account';
 const ICON_PNG = path.join(__dirname, '..', 'build', 'icon.png');
 const ICON_ICO = path.join(__dirname, '..', 'build', 'icon.ico');
 const ICON_PATH = process.platform === 'win32' ? ICON_ICO : ICON_PNG;
+const STARTUP_LOG = path.join(process.env.HOME || process.cwd(), 'Library', 'Logs', 'flow-multi-account-dev-startup.log');
+
+function appendStartupLog(message) {
+  try {
+    fs.appendFileSync(STARTUP_LOG, `[${new Date().toISOString()}] ${String(message || '').trim()}\n`, 'utf8');
+  } catch {
+    // ignore
+  }
+}
+
+process.on('uncaughtException', (err) => {
+  appendStartupLog(`uncaughtException: ${err?.stack || err}`);
+});
+
+process.on('unhandledRejection', (reason) => {
+  appendStartupLog(`unhandledRejection: ${reason?.stack || reason}`);
+});
 
 // Improve taskbar/dock identity (especially on Windows).
 app.setName(APP_NAME);
@@ -196,18 +216,53 @@ function createMainWindow() {
     backgroundColor: '#f3f6ef',
     show: false,
     autoHideMenuBar: true,
-    title: APP_NAME,
+    title: WINDOW_TITLE,
     icon: ICON_PATH,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-      devTools: process.env.FMA_DEVTOOLS === '1'
+      devTools: process.env.FMA_DEVTOOLS !== '0'
     }
   });
 
-  win.once('ready-to-show', () => win.show());
+  win.webContents.on('before-input-event', (event, input) => {
+    const key = String(input?.key || '').toLowerCase();
+    const commandCombo = input?.meta && input?.alt && key === 'i';
+    const controlCombo = input?.control && input?.shift && key === 'i';
+    const f12 = key === 'f12';
+    if (!commandCombo && !controlCombo && !f12) return;
+    event.preventDefault();
+    if (win.webContents.isDevToolsOpened()) {
+      win.webContents.closeDevTools();
+    } else {
+      win.webContents.openDevTools({ mode: 'detach' });
+    }
+  });
+
+  win.once('ready-to-show', () => {
+    appendStartupLog('ready-to-show');
+    win.show();
+  });
+  win.webContents.on('did-fail-load', (_event, code, desc, url) => {
+    appendStartupLog(`did-fail-load code=${code} desc=${desc} url=${url}`);
+  });
+  win.webContents.on('did-finish-load', () => {
+    appendStartupLog(`did-finish-load url=${win.webContents.getURL()}`);
+  });
+  win.webContents.on('render-process-gone', (_event, details) => {
+    appendStartupLog(`render-process-gone reason=${details?.reason || 'unknown'} exitCode=${details?.exitCode ?? 'n/a'}`);
+  });
+  win.webContents.on('destroyed', () => {
+    appendStartupLog('webContents destroyed');
+  });
+  win.on('close', () => {
+    appendStartupLog('main-window close');
+  });
+  win.on('closed', () => {
+    appendStartupLog('main-window closed');
+  });
 
   const indexPath = path.join(__dirname, '..', 'public', 'index.html');
   win.loadFile(indexPath);
@@ -384,6 +439,7 @@ ipcMain.handle('profiles:export', async (_evt, payload) => {
 });
 
 ipcMain.handle('flow:open', async (_evt, name) => {
+  appendStartupLog(`ipc flow:open name=${String(name || '')}`);
   if (deviceState.isActivated()) {
     const s = deviceState.readDeviceState();
     const allowed = Array.isArray(s.allowedProfiles) ? s.allowedProfiles : [];
@@ -393,18 +449,22 @@ ipcMain.handle('flow:open', async (_evt, name) => {
   return { success: true, ...result };
 });
 ipcMain.handle('flow:close', async () => {
+  appendStartupLog('ipc flow:close');
   await flowWindow.closeAllFlowWindows();
   return { success: true };
 });
 ipcMain.handle('flow:closeSession', async (_evt, sessionId) => {
+  appendStartupLog(`ipc flow:closeSession sessionId=${String(sessionId || '')}`);
   const result = await flowWindow.closeFlowSession(sessionId);
   return { success: true, ...result };
 });
 ipcMain.handle('flow:focusSession', async (_evt, sessionId) => {
+  appendStartupLog(`ipc flow:focusSession sessionId=${String(sessionId || '')}`);
   const result = await flowWindow.focusFlowSession(sessionId);
   return { success: true, ...result };
 });
 ipcMain.handle('flow:quit', async () => {
+  appendStartupLog('ipc flow:quit');
   await flowWindow.quitBrowser();
   return { success: true };
 });
@@ -426,24 +486,53 @@ ipcMain.handle('capture:cancel', async () => {
   return { success: true };
 });
 
-ipcMain.handle('app:status', async () => ({
-  appVersion: app.getVersion(),
-  isPackaged: app.isPackaged,
-  platform: process.platform,
-  update: autoUpdateCtl ? autoUpdateCtl.state() : autoUpdateState,
-  flow: flowWindow.getFlowState({
-    includeProxyDebug: process.env.FMA_PROXY_LOG_CREDENTIALS === '1' || process.env.FMA_PROXY_DEBUG === '1'
-  }),
-  capture: profileCapture.getCaptureState(),
-  profilesDir: profiles.getProfilesDir(),
-  noLocalProfiles: profiles.isNoLocalProfiles(),
-  downloadsDir: downloads.getDownloadsDir(),
-  singBox: singBox.getPluginStatus(),
-  device: {
-    ...deviceState.readDeviceState(),
-    activated: deviceState.isActivated()
+ipcMain.handle('app:status', async (_evt, payload) => {
+  const forceDeviceValidation = Boolean(payload?.forceDeviceValidation);
+  const rawDevice = deviceState.readDeviceState();
+  let access;
+  try {
+    access = await accountService.validateDeviceAccess({
+      force: forceDeviceValidation,
+      maxAgeMs: 15000,
+    });
+  } catch (err) {
+    access = {
+      state: 'validation-error',
+      canUseApp: false,
+      needsActivation: false,
+      message: err?.message || '无法验证激活状态，请检查管理服务。',
+      machineId: rawDevice.machineId || null,
+      serverUrl: rawDevice.serverUrl || null,
+      checkedAt: new Date().toISOString(),
+      localActivated: deviceState.isActivated(),
+      serverValidated: false,
+      allowedProfiles: Array.isArray(rawDevice.allowedProfiles) ? rawDevice.allowedProfiles : [],
+      activatedAt: null,
+      lastSeenAt: null,
+    };
   }
-}));
+
+  return {
+    appVersion: app.getVersion(),
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    update: autoUpdateCtl ? autoUpdateCtl.state() : autoUpdateState,
+    flow: flowWindow.getFlowState({
+      includeProxyDebug: process.env.FMA_PROXY_LOG_CREDENTIALS === '1' || process.env.FMA_PROXY_DEBUG === '1'
+    }),
+    capture: profileCapture.getCaptureState(),
+    chat: await chatGeneration.getState(),
+    profilesDir: profiles.getProfilesDir(),
+    noLocalProfiles: profiles.isNoLocalProfiles(),
+    downloadsDir: downloads.getDownloadsDir(),
+    singBox: singBox.getPluginStatus(),
+    device: {
+      ...deviceState.readDeviceState(),
+      activated: deviceState.isActivated(),
+      access,
+    }
+  };
+});
 
 ipcMain.handle('update:check', async (_evt, opts) => {
   if (!autoUpdateCtl) return { ok: false, error: 'auto update not available' };
@@ -467,12 +556,14 @@ ipcMain.handle('update:openLog', async () => {
 });
 
 ipcMain.handle('app:openProfilesFolder', async () => {
+  appendStartupLog('ipc app:openProfilesFolder');
   const dir = profiles.getProfilesDir();
   await shell.openPath(dir);
   return { success: true };
 });
 
 ipcMain.handle('app:openDownloadsFolder', async () => {
+  appendStartupLog('ipc app:openDownloadsFolder');
   const dir = downloads.getDownloadsDir();
   try {
     fs.mkdirSync(dir, { recursive: true });
@@ -484,6 +575,7 @@ ipcMain.handle('app:openDownloadsFolder', async () => {
 });
 
 ipcMain.handle('app:openExternal', async (_evt, url) => {
+  appendStartupLog(`ipc app:openExternal url=${String(url || '')}`);
   const raw = String(url || '').trim();
   if (!raw) throw new Error('url required');
   let u;
@@ -534,6 +626,7 @@ ipcMain.handle('device:setServerUrl', async (_evt, payload) => {
   if (!serverUrlRaw) throw new Error('请输入服务地址');
   const base = normalizeAndValidateServerUrl(serverUrlRaw);
   const next = deviceState.writeDeviceState({ serverUrl: base });
+  accountService.invalidateDeviceValidation();
   return { success: true, device: { ...next, activated: deviceState.isActivated() } };
 });
 
@@ -575,7 +668,22 @@ ipcMain.handle('app:resetDownloadsFolder', async () => {
   return { success: true, downloadsDir: downloads.getDownloadsDir() };
 });
 
+ipcMain.handle('chat:getState', async () => chatGeneration.getState());
+
+ipcMain.handle('chat:listTargets', async () => chatGeneration.listTargetMachines());
+
+ipcMain.handle('chat:listChannels', async () => chatGeneration.listChannels());
+
+ipcMain.handle('chat:updateSettings', async (_evt, payload) => chatGeneration.updateSettings(payload));
+
+ipcMain.handle('chat:send', async (_evt, payload) => chatGeneration.sendMessage(payload));
+
+ipcMain.handle('chat:clearHistory', async () => chatGeneration.clearHistory());
+
+ipcMain.handle('chat:getAssetData', async (_evt, assetId) => chatGeneration.getAssetData(assetId));
+
 app.whenReady().then(() => {
+  appendStartupLog('app.whenReady begin');
   if (process.platform === 'darwin') {
     try {
       app.dock.setIcon(ICON_PNG);
@@ -617,7 +725,31 @@ app.whenReady().then(() => {
   }
 
   const win = createMainWindow();
+  appendStartupLog('createMainWindow done');
   setupAutoUpdate(win);
+
+  try {
+    globalShortcut.register('CommandOrControl+Shift+I', () => {
+      const focusedWindow = BrowserWindow.getFocusedWindow() || win;
+      if (!focusedWindow || focusedWindow.isDestroyed()) return;
+      if (focusedWindow.webContents.isDevToolsOpened()) {
+        focusedWindow.webContents.closeDevTools();
+      } else {
+        focusedWindow.webContents.openDevTools({ mode: 'detach' });
+      }
+    });
+    globalShortcut.register('F12', () => {
+      const focusedWindow = BrowserWindow.getFocusedWindow() || win;
+      if (!focusedWindow || focusedWindow.isDestroyed()) return;
+      if (focusedWindow.webContents.isDevToolsOpened()) {
+        focusedWindow.webContents.closeDevTools();
+      } else {
+        focusedWindow.webContents.openDevTools({ mode: 'detach' });
+      }
+    });
+  } catch (error) {
+    appendStartupLog(`register devtools shortcut failed: ${error?.stack || error}`);
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
@@ -625,10 +757,12 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  appendStartupLog('window-all-closed');
   if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('before-quit', () => {
+  appendStartupLog('before-quit');
   try {
     // Best-effort: kill local sing-box (if started) so it won’t linger after app exit.
     singBox.stop().catch(() => {});
@@ -643,4 +777,17 @@ app.on('before-quit', () => {
       // ignore
     }
   }
+});
+
+app.on('will-quit', () => {
+  appendStartupLog('will-quit');
+  try {
+    globalShortcut.unregisterAll();
+  } catch {
+    // ignore
+  }
+});
+
+app.on('quit', (_event, exitCode) => {
+  appendStartupLog(`quit exitCode=${exitCode}`);
 });

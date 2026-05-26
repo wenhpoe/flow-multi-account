@@ -40,7 +40,13 @@ function normalizeUrl(u) {
 
 function readDeviceState() {
   const fp = getDeviceFilePath();
-  const base = { machineId: null, token: null, serverUrl: normalizeUrl(defaultBaseUrl()), allowedProfiles: [] };
+  const base = {
+    machineId: null,
+    token: null,
+    serverUrl: normalizeUrl(defaultBaseUrl()),
+    allowedProfiles: [],
+    exitIpByProfile: {},
+  };
   if (!fp) return base;
 
   try {
@@ -58,7 +64,23 @@ function readDeviceState() {
     const allowedProfiles = Array.isArray(data?.allowedProfiles)
       ? data.allowedProfiles.map((s) => String(s).trim()).filter(Boolean)
       : [];
-    return { machineId, token, serverUrl, allowedProfiles };
+    const rawIpMap = data?.exitIpByProfile && typeof data.exitIpByProfile === 'object' ? data.exitIpByProfile : {};
+    const exitIpByProfile = {};
+    for (const [k, v] of Object.entries(rawIpMap || {})) {
+      const name = String(k || '').trim();
+      if (!name) continue;
+      if (typeof v === 'string') {
+        const ip = v.trim();
+        if (ip) exitIpByProfile[name] = { ip, checkedAt: null };
+        continue;
+      }
+      if (v && typeof v === 'object') {
+        const ip = String(v.ip || '').trim();
+        const checkedAt = typeof v.checkedAt === 'string' ? v.checkedAt : null;
+        if (ip) exitIpByProfile[name] = { ip, checkedAt };
+      }
+    }
+    return { machineId, token, serverUrl, allowedProfiles, exitIpByProfile };
   } catch {
     // If corrupted, reset while preserving a stable machineId if possible.
     const machineId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
@@ -80,6 +102,26 @@ function writeDeviceState(patch) {
   if (next.serverUrl) next.serverUrl = normalizeUrl(next.serverUrl);
   if (next.allowedProfiles && Array.isArray(next.allowedProfiles)) {
     next.allowedProfiles = next.allowedProfiles.map((s) => String(s).trim()).filter(Boolean);
+  }
+  if (next.exitIpByProfile && typeof next.exitIpByProfile === 'object') {
+    const cleaned = {};
+    for (const [k, v] of Object.entries(next.exitIpByProfile || {})) {
+      const name = String(k || '').trim();
+      if (!name) continue;
+      if (typeof v === 'string') {
+        const ip = v.trim();
+        if (ip) cleaned[name] = { ip, checkedAt: null };
+        continue;
+      }
+      if (v && typeof v === 'object') {
+        const ip = String(v.ip || '').trim();
+        const checkedAt = typeof v.checkedAt === 'string' ? v.checkedAt : null;
+        if (ip) cleaned[name] = { ip, checkedAt };
+      }
+    }
+    next.exitIpByProfile = cleaned;
+  } else {
+    next.exitIpByProfile = {};
   }
   writeJsonAtomicSync(fp, next);
   return next;

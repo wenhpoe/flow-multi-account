@@ -1,14 +1,16 @@
 const express = require('express');
 const path = require('path');
+require('./core/loadEnv')();
 const profiles = require('./core/profiles');
 const flowWindow = require('./core/flowWindow');
 const profileCapture = require('./core/profileCapture');
+const chatGeneration = require('./core/chatGeneration');
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.json());
+app.use(express.json({ limit: '25mb' }));
 
 // ==================== API ====================
 
@@ -71,11 +73,72 @@ app.post('/quit', async (req, res) => {
   }
 });
 
-app.get('/status', (req, res) => {
-  res.json({
-    flow: flowWindow.getFlowState(),
-    capture: profileCapture.getCaptureState()
-  });
+app.get('/status', async (req, res) => {
+  try {
+    res.json({
+      flow: flowWindow.getFlowState(),
+      capture: profileCapture.getCaptureState(),
+      chat: await chatGeneration.getState(),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || '获取状态失败' });
+  }
+});
+
+app.get('/chat/state', async (req, res) => {
+  try {
+    res.json(await chatGeneration.getState());
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || '获取聊天状态失败' });
+  }
+});
+
+app.get('/chat/targets', async (req, res) => {
+  try {
+    res.json(await chatGeneration.listTargetMachines());
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || '获取执行机列表失败' });
+  }
+});
+
+app.post('/chat/settings', (req, res) => {
+  try {
+    res.json(chatGeneration.updateSettings(req.body || {}));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || '保存聊天设置失败' });
+  }
+});
+
+app.post('/chat/send', async (req, res) => {
+  try {
+    res.json(await chatGeneration.sendMessage(req.body || {}));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || '发送生成任务失败' });
+  }
+});
+
+app.post('/chat/clear', (req, res) => {
+  try {
+    res.json(chatGeneration.clearHistory());
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || '清空聊天记录失败' });
+  }
+});
+
+app.get('/chat/assets/:assetId', async (req, res) => {
+  try {
+    const result = await chatGeneration.getAssetData(req.params.assetId);
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(404).json({ error: err.message || '图片资源不存在' });
+  }
 });
 
 app.delete('/profiles/:profile', (req, res) => {
