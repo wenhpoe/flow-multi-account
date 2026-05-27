@@ -737,7 +737,9 @@ async function submitRemoteJob(job) {
                 },
                 extra_body: {
                   resolution: job.settings.resolution || '720p',
-                  firstFrameUrl: referenceAsset?.metadata?.publicUrl || '',
+                  ...(referenceAsset?.metadata?.publicUrl
+                    ? { images: [referenceAsset.metadata.publicUrl] }
+                    : {}),
                 },
               },
             }

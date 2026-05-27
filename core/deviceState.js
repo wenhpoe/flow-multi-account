@@ -35,6 +35,12 @@ function normalizeUrl(u) {
   // If user enters "host:port" without scheme, default to http://
   // Examples: "192.168.1.10:3123" / "localhost:3123"
   if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s)) s = `http://${s}`;
+  try {
+    const parsed = new URL(s);
+    if (/^https?:$/.test(parsed.protocol)) return parsed.origin;
+  } catch {
+    // Keep the original validation path/error message for callers.
+  }
   return s.replace(/\/+$/, '');
 }
 
