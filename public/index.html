@@ -5789,6 +5789,7 @@
                                         id="chatReferenceInput"
                                         type="file"
                                         accept="image/*"
+                                        multiple
                                         hidden
                                     />
                                     <div
@@ -6081,7 +6082,7 @@
                 });
             }
             let currentStatusSnapshot = null;
-            let chatPendingReference = null;
+            let chatPendingReferences = [];
             let previewChatStateCache = null;
             let lastRenderedMessagesSignature = "";
             let activationUiBusy = false;
@@ -6240,25 +6241,25 @@
                 const heroReference = document.getElementById(
                     "heroReferenceState",
                 );
-                const hasReference = Boolean(chatPendingReference?.dataUrl);
+                const references = Array.isArray(chatPendingReferences)
+                    ? chatPendingReferences.filter((item) => item?.dataUrl)
+                    : [];
+                const firstReference = references[0] || null;
+                const hasReference = references.length > 0;
                 if (label) {
                     label.innerHTML =
-                        '<span class="label-ntjuL3 seedance-reference-label">参考</span>';
+                        `<span class="label-ntjuL3 seedance-reference-label">参考${references.length > 1 ? ` ${references.length}` : ""}</span>`;
                 }
                 if (hint) {
-                    const channel =
-                        document.getElementById("chatChannel")?.value ||
-                        currentChatState?.settings?.channel ||
-                        "flow";
                     hint.textContent = hasReference
-                        ? "点击替换参考"
+                        ? `已选 ${references.length} 张，点击或拖入继续添加`
                         : "点击或拖入参考图";
                 }
                 if (cta) {
-                    cta.textContent = hasReference ? "替换参考" : "选择参考";
+                    cta.textContent = hasReference ? "继续添加" : "选择参考";
                 }
                 if (preview) {
-                    const dataUrl = chatPendingReference?.dataUrl || "";
+                    const dataUrl = firstReference?.dataUrl || "";
                     preview.hidden = !dataUrl;
                     if (dataUrl) preview.src = dataUrl;
                     else preview.removeAttribute("src");
@@ -6267,18 +6268,18 @@
                     placeholder.hidden = hasReference;
                 }
                 if (clearBtn) clearBtn.hidden = !hasReference;
-                if (state) state.textContent = hasReference ? "已选" : "";
+                if (state) state.textContent = hasReference ? `${references.length}张` : "";
                 if (shell) {
                     shell.classList.toggle("has-file", hasReference);
                     shell.classList.remove("is-dragging");
                 }
                 if (trigger) {
                     trigger.title = hasReference
-                        ? chatPendingReference?.name || "已选参考"
+                        ? references.map((item) => item.name).filter(Boolean).join("、") || "已选参考"
                         : "添加参考";
                 }
                 if (heroReference) {
-                    heroReference.textContent = chatPendingReference
+                    heroReference.textContent = hasReference
                         ? "Ready"
                         : "Empty";
                 }
@@ -7317,26 +7318,49 @@
                 input.setSelectionRange(input.value.length, input.value.length);
             }
 
-            async function setReferenceFromFile(file) {
-                if (!file) {
-                    chatPendingReference = null;
-                    renderChatReferenceState();
-                    return;
+            async function readReferenceFile(file) {
+                if (!file) return null;
+                if (file.type && !String(file.type).startsWith("image/")) {
+                    throw new Error(`${file.name || "文件"} 不是图片格式`);
                 }
+                const dataUrl = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = () => reject(reader.error);
+                    reader.readAsDataURL(file);
+                });
+                return {
+                    name: String(file.name || "reference-image"),
+                    dataUrl: String(dataUrl || ""),
+                };
+            }
+
+            async function addReferencesFromFiles(files) {
+                const list = Array.from(files || []).filter(Boolean);
+                if (!list.length) return;
                 try {
-                    const dataUrl = await new Promise((resolve, reject) => {
-                        const reader = new FileReader();
-                        reader.onload = () => resolve(reader.result);
-                        reader.onerror = () => reject(reader.error);
-                        reader.readAsDataURL(file);
-                    });
-                    chatPendingReference = {
-                        name: String(file.name || "reference-image"),
-                        dataUrl: String(dataUrl || ""),
-                    };
+                    const nextItems = [];
+                    for (const file of list) {
+                        const item = await readReferenceFile(file);
+                        if (item?.dataUrl) nextItems.push(item);
+                    }
+                    const existing = Array.isArray(chatPendingReferences)
+                        ? chatPendingReferences
+                        : [];
+                    const seen = new Set(
+                        existing.map((item) => `${item.name}\n${item.dataUrl}`),
+                    );
+                    const merged = [...existing];
+                    for (const item of nextItems) {
+                        const key = `${item.name}\n${item.dataUrl}`;
+                        if (seen.has(key)) continue;
+                        seen.add(key);
+                        merged.push(item);
+                    }
+                    chatPendingReferences = merged;
                     renderChatReferenceState();
-                    setStatus("ok", `已载入 ${file.name || "参考文件"}`, {
-                        autoHideMs: 2200,
+                    setStatus("ok", `已载入 ${nextItems.length} 张参考图，共 ${merged.length} 张`, {
+                        autoHideMs: 2600,
                     });
                 } catch (err) {
                     setStatus("err", err.message || "读取参考失败", {
@@ -7358,12 +7382,16 @@
                     });
                     return;
                 }
-                chatPendingReference = {
+                const nextItem = {
                     name: String(name || "reference-image"),
                     dataUrl,
                 };
+                const existing = Array.isArray(chatPendingReferences)
+                    ? chatPendingReferences
+                    : [];
+                chatPendingReferences = [...existing, nextItem];
                 renderChatReferenceState();
-                setStatus("ok", `已将 ${name || "该图片"} 设为参考`, {
+                setStatus("ok", `已添加 ${name || "该图片"} 为参考，共 ${chatPendingReferences.length} 张`, {
                     autoHideMs: 2600,
                 });
             }
@@ -8176,7 +8204,8 @@
                     const result = await api.sendChatMessage({
                         prompt,
                         settings: collectChatSettings(),
-                        referenceImage: chatPendingReference,
+                        referenceImage: chatPendingReferences[0] || null,
+                        referenceImages: chatPendingReferences,
                     });
                     if (result && result.success === false) {
                         setStatus(
@@ -8187,7 +8216,7 @@
                         return;
                     }
                     document.getElementById("chatPrompt").value = "";
-                    chatPendingReference = null;
+                    chatPendingReferences = [];
                     renderChatReferenceState();
                     await refreshAll({ silent: true });
                 } catch (err) {
@@ -8270,7 +8299,7 @@
             document
                 .getElementById("btnChatClearReference")
                 ?.addEventListener("click", () => {
-                    chatPendingReference = null;
+                    chatPendingReferences = [];
                     const input = document.getElementById("chatReferenceInput");
                     if (input) input.value = "";
                     renderChatReferenceState();
@@ -8299,15 +8328,16 @@
             referenceShell?.addEventListener("drop", async (e) => {
                 e.preventDefault();
                 setReferenceDragState(false);
-                const file = e.dataTransfer?.files?.[0];
-                if (!file) return;
-                await setReferenceFromFile(file);
+                const files = e.dataTransfer?.files;
+                if (!files?.length) return;
+                await addReferencesFromFiles(files);
             });
             document
                 .getElementById("chatReferenceInput")
                 ?.addEventListener("change", async (e) => {
-                    const file = e.target?.files?.[0];
-                    await setReferenceFromFile(file);
+                    const files = e.target?.files;
+                    await addReferencesFromFiles(files);
+                    if (e.target) e.target.value = "";
                 });
             document
                 .getElementById("chatPrompt")

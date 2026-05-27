@@ -516,7 +516,8 @@ function refreshJobMessage(job, batch) {
   const meta = {
     prompt: job.prompt,
     aspectRatio: job.settings.aspectRatio,
-    referenceName: job.referenceImage?.name || null,
+    referenceName: referenceNamesLabel(job.referenceImages) || job.referenceImage?.name || null,
+    referenceCount: Array.isArray(job.referenceImages) ? job.referenceImages.length : (job.referenceImage ? 1 : 0),
     batchId: batch.id,
     taskId: task.id,
     taskStatus: task.status,
@@ -587,6 +588,33 @@ function parseReferenceImage(payload) {
   const dataUrl = String(payload.dataUrl || '').trim();
   if (!dataUrl) return null;
   return { name, dataUrl };
+}
+
+function parseReferenceImages(payload) {
+  const items = Array.isArray(payload?.referenceImages)
+    ? payload.referenceImages
+    : payload?.referenceImage
+      ? [payload.referenceImage]
+      : [];
+  const parsed = [];
+  const seen = new Set();
+  for (const item of items) {
+    const image = parseReferenceImage(item);
+    if (!image) continue;
+    const key = `${image.name}\n${image.dataUrl}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    parsed.push(image);
+  }
+  return parsed;
+}
+
+function referenceNamesLabel(referenceImages) {
+  const images = Array.isArray(referenceImages) ? referenceImages : [];
+  if (!images.length) return null;
+  if (images.length === 1) return images[0].name || 'reference.png';
+  const firstName = images[0].name || 'reference.png';
+  return `${firstName} 等 ${images.length} 张`;
 }
 
 function writeReferenceImage({ machineId, jobId, referenceImage }) {
@@ -670,6 +698,24 @@ async function registerReferenceAsset(job) {
   return response?.asset || null;
 }
 
+async function registerReferenceAssets(job) {
+  const images = Array.isArray(job.referenceImages) ? job.referenceImages : [];
+  if (!images.length) return [];
+  const assets = [];
+  for (let index = 0; index < images.length; index += 1) {
+    const image = images[index];
+    const asset = await registerReferenceAsset({
+      ...job,
+      referenceImage: image,
+    });
+    if (asset) {
+      assets.push(asset);
+      appendJobLog(job, `参考图 ${index + 1}/${images.length} 已登记：${asset.id || 'unknown'}`);
+    }
+  }
+  return assets;
+}
+
 async function submitRemoteJob(job) {
   appendJobLog(job, '开始提交到远端任务队列');
   setAssistantProgress(job, '正在写入任务并登记输入资源…', {
@@ -677,11 +723,11 @@ async function submitRemoteJob(job) {
     logs: job.logs || [],
   });
 
-  let referenceAsset = null;
-  if (job.referenceImage) {
-    referenceAsset = await registerReferenceAsset(job);
-    appendJobLog(job, `参考图已登记：${referenceAsset?.id || 'unknown'}`);
-  }
+  const referenceAssets = await registerReferenceAssets(job);
+  const referenceAsset = referenceAssets[0] || null;
+  const referenceImageUrls = referenceAssets
+    .map((asset) => String(asset?.metadata?.publicUrl || '').trim())
+    .filter(Boolean);
 
   const expireAt = new Date(Date.now() + job.settings.expireHours * 60 * 60 * 1000).toISOString();
   const isSeedance = String(job.settings.channel || '').trim().toLowerCase() === 'seedance';
@@ -704,6 +750,7 @@ async function submitRemoteJob(job) {
         taskType: job.settings.taskType,
         prompt: job.prompt,
         referenceAssetId: referenceAsset ? referenceAsset.id : null,
+        referenceAssetIds: referenceAssets.map((asset) => asset.id).filter(Boolean),
         modelName: job.settings.modelName,
         aspectRatio: job.settings.aspectRatio,
         humanSpeedPreset: job.settings.humanSpeedPreset,
@@ -713,6 +760,7 @@ async function submitRemoteJob(job) {
         },
         taskSettings: {
           source: 'flow_multi_account_chat',
+          referenceAssetIds: referenceAssets.map((asset) => asset.id).filter(Boolean),
         },
         operation: isSeedance ? 'video.generate' : 'flow.run',
         inputPayload: isSeedance
@@ -720,6 +768,8 @@ async function submitRemoteJob(job) {
               channel: job.settings.channel,
               provider: job.settings.provider,
               operation: 'video.generate',
+              referenceAssetId: referenceAsset ? referenceAsset.id : null,
+              referenceAssetIds: referenceAssets.map((asset) => asset.id).filter(Boolean),
               params: {
                 prompt: job.prompt,
                 size: job.settings.aspectRatio === 'IMAGE_ASPECT_RATIO_LANDSCAPE'
@@ -737,8 +787,8 @@ async function submitRemoteJob(job) {
                 },
                 extra_body: {
                   resolution: job.settings.resolution || '720p',
-                  ...(referenceAsset?.metadata?.publicUrl
-                    ? { images: [referenceAsset.metadata.publicUrl] }
+                  ...(referenceImageUrls.length
+                    ? { images: referenceImageUrls }
                     : {}),
                 },
               },
@@ -796,12 +846,13 @@ async function watchRemoteJob(job, { submit = false } = {}) {
     setAssistantProgress(job, err && err.message ? err.message : '任务提交失败', {
       status: 'failed',
       logs: job.logs || [],
-      meta: {
-        prompt: job.prompt,
-        aspectRatio: job.settings.aspectRatio,
-        referenceName: job.referenceImage?.name || null,
-        batchId: job.batchId || null,
-      },
+        meta: {
+          prompt: job.prompt,
+          aspectRatio: job.settings.aspectRatio,
+          referenceName: referenceNamesLabel(job.referenceImages) || job.referenceImage?.name || null,
+          referenceCount: Array.isArray(job.referenceImages) ? job.referenceImages.length : (job.referenceImage ? 1 : 0),
+          batchId: job.batchId || null,
+        },
     });
   } finally {
     job.isPolling = false;
@@ -935,7 +986,9 @@ async function sendMessage(payload) {
   const jobId = makeId('job');
   const userMessageId = makeId('msg');
   const assistantMessageId = makeId('msg');
-  const referenceImage = parseReferenceImage(payload?.referenceImage);
+  const referenceImages = parseReferenceImages(payload);
+  const referenceImage = referenceImages[0] || null;
+  const referenceName = referenceNamesLabel(referenceImages);
 
   pushMessage({
     id: userMessageId,
@@ -946,7 +999,8 @@ async function sendMessage(payload) {
     attachments: [],
     meta: {
       prompt,
-      referenceName: referenceImage?.name || null,
+      referenceName,
+      referenceCount: referenceImages.length,
       aspectRatio: settings.aspectRatio,
     },
   });
@@ -963,7 +1017,8 @@ async function sendMessage(payload) {
     meta: {
       prompt,
       aspectRatio: settings.aspectRatio,
-      referenceName: referenceImage?.name || null,
+      referenceName,
+      referenceCount: referenceImages.length,
       machineId: targetMachineId,
       requiredAccountId: settings.requiredAccountId || null,
     },
@@ -977,6 +1032,7 @@ async function sendMessage(payload) {
     machineId: device.machineId,
     targetMachineId,
     referenceImage,
+    referenceImages,
     settings,
     logs: [],
     batchId: null,
