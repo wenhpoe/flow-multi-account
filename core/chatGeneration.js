@@ -435,7 +435,111 @@ function remoteStatusToLocal(status) {
   return 'failed';
 }
 
-function summarizeTask(task, batch) {
+function compactErrorText(value, maxLength = 2000) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1)}…`;
+}
+
+function parseJsonObjectFromText(value) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const candidates = [text];
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start >= 0 && end > start) candidates.push(text.slice(start, end + 1));
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch {
+      // keep trying narrower candidates
+    }
+  }
+  return null;
+}
+
+function stripErrorPrefix(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^[A-Za-z_][\w.]*Error:\s*/u, '')
+    .trim();
+}
+
+function firstString(...values) {
+  for (const value of values) {
+    const text = String(value || '').trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+function normalizeErrorDetails(value) {
+  if (value == null) return { code: '', message: '' };
+  if (typeof value === 'string') {
+    const parsed = parseJsonObjectFromText(value);
+    if (parsed) {
+      const details = normalizeErrorDetails(parsed);
+      if (details.message || details.code) return details;
+    }
+    return { code: '', message: stripErrorPrefix(value) };
+  }
+  if (typeof value !== 'object') {
+    return { code: '', message: String(value || '').trim() };
+  }
+
+  const error = value.error && typeof value.error === 'object' ? value.error : null;
+  const data = value.data && typeof value.data === 'object' ? value.data : null;
+  const dataError = data?.error && typeof data.error === 'object' ? data.error : null;
+  const outputError = value.outputSummary?.error || value.output_summary?.error || null;
+  const nested =
+    normalizeErrorDetails(error || dataError || outputError || value.cause || null);
+  const code = firstString(
+    value.code,
+    value.errorCode,
+    value.error_code,
+    nested.code,
+    error?.code,
+    dataError?.code,
+    value.type,
+    error?.type,
+    dataError?.type,
+  );
+  const message = firstString(
+    value.message,
+    value.errorMessage,
+    value.error_message,
+    value.detail,
+    value.description,
+    nested.message,
+    typeof value.error === 'string' ? value.error : '',
+    typeof data?.error === 'string' ? data.error : '',
+  );
+  return { code, message: stripErrorPrefix(message) };
+}
+
+function extractRemoteErrorDetails(...values) {
+  for (const value of values) {
+    const details = normalizeErrorDetails(value);
+    if (details.message || details.code) {
+      return {
+        code: compactErrorText(details.code, 256),
+        message: compactErrorText(details.message || details.code),
+      };
+    }
+  }
+  return { code: '', message: '' };
+}
+
+function formatRemoteErrorMessage(details, fallback = '生成失败，请稍后重试。') {
+  const message = compactErrorText(details?.message || fallback);
+  const code = compactErrorText(details?.code || '', 256);
+  if (code && message && !message.includes(code)) return `${message}\n错误码：${code}`;
+  return message || code || fallback;
+}
+
+function summarizeTask(task, batch, errorDetails = null) {
   const status = String(task?.status || batch?.status || 'queued');
   if (status === 'queued') return '任务已提交，正在排队。';
   if (status === 'running') return '任务执行中，请稍候。';
@@ -445,8 +549,10 @@ function summarizeTask(task, batch) {
     return count ? `已完成，返回 ${count} 个结果。` : '任务已完成，但当前页暂无可展示结果。';
   }
   if (status === 'cancelled') return '任务已取消。';
-  if (status === 'expired') return '生成失败，请稍后重试。';
-  return '生成失败，请稍后重试。';
+  if (status === 'expired') {
+    return formatRemoteErrorMessage(errorDetails, '任务已过期，请重新提交。');
+  }
+  return formatRemoteErrorMessage(errorDetails, '生成失败，请稍后重试。');
 }
 
 function assetRecordFromRemote(asset) {
@@ -513,8 +619,14 @@ function refreshJobMessage(job, batch) {
   const effectiveSlotId = task.claimedBySlotId || latestRun?.slotId || null;
   const effectiveAccountProfile =
     latestRun?.accountProfile || task.requiredAccountProfile || job.settings.requiredAccountId || null;
-  const effectiveErrorCode = task.errorCode || latestRun?.errorCode || null;
-  const effectiveErrorMessage = task.errorMessage || latestRun?.errorMessage || null;
+  const extractedError = extractRemoteErrorDetails(
+    task.errorMessage,
+    latestRun?.errorMessage,
+    task.resultPayload,
+    latestRun?.outputSummary,
+  );
+  const effectiveErrorCode = extractedError.code || task.errorCode || latestRun?.errorCode || null;
+  const effectiveErrorMessage = extractedError.message || null;
 
   job.batchId = batch.id;
   job.taskId = task.id;
@@ -522,7 +634,10 @@ function refreshJobMessage(job, batch) {
   job.remoteBatchStatus = batch.status;
 
   const attachments = isTerminalRemoteStatus(task.status) ? buildAttachmentsFromTask(task) : [];
-  const text = summarizeTask(task, batch);
+  const text = summarizeTask(task, batch, {
+    code: effectiveErrorCode,
+    message: effectiveErrorMessage,
+  });
   const meta = {
     prompt: job.prompt,
     aspectRatio: job.settings.aspectRatio,
@@ -852,17 +967,21 @@ async function watchRemoteJob(job, { submit = false } = {}) {
     }
     await pollRemoteJob(job);
   } catch (err) {
-    appendJobLog(job, `提交或同步失败：${err && err.message ? err.message : String(err)}`);
-    setAssistantProgress(job, err && err.message ? err.message : '任务提交失败', {
+    const errorDetails = extractRemoteErrorDetails(err?.message, err);
+    const errorMessage = formatRemoteErrorMessage(errorDetails, '任务提交失败');
+    appendJobLog(job, `提交或同步失败：${errorMessage}`);
+    setAssistantProgress(job, errorMessage, {
       status: 'failed',
       logs: job.logs || [],
-        meta: {
-          prompt: job.prompt,
-          aspectRatio: job.settings.aspectRatio,
-          referenceName: referenceNamesLabel(job.referenceImages) || job.referenceImage?.name || null,
-          referenceCount: Array.isArray(job.referenceImages) ? job.referenceImages.length : (job.referenceImage ? 1 : 0),
-          batchId: job.batchId || null,
-        },
+      meta: {
+        prompt: job.prompt,
+        aspectRatio: job.settings.aspectRatio,
+        referenceName: referenceNamesLabel(job.referenceImages) || job.referenceImage?.name || null,
+        referenceCount: Array.isArray(job.referenceImages) ? job.referenceImages.length : (job.referenceImage ? 1 : 0),
+        batchId: job.batchId || null,
+        errorCode: errorDetails.code || null,
+        errorMessage,
+      },
     });
   } finally {
     job.isPolling = false;
