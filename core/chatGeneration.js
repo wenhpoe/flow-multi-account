@@ -15,6 +15,7 @@ const DEFAULT_PROVIDER = '1';
 const DEFAULT_PRIORITY = 50;
 const DEFAULT_EXPIRE_HOURS = 24;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
+const DEFAULT_RESOLUTION = '720p';
 const MAX_MESSAGES = 80;
 const MAX_LOG_LINES = 10;
 const RESTORE_BATCH_LIMIT = Math.max(10, Math.floor(MAX_MESSAGES / 2));
@@ -28,6 +29,7 @@ const VALID_ASPECT_RATIOS = new Set([
 ]);
 const VALID_SPEEDS = new Set(['safe', 'balanced', 'fast']);
 const VALID_TASK_TYPES = new Set(['image', 'video']);
+const VALID_RESOLUTIONS = new Set(['480p', '720p', '1080p']);
 
 function resolveDefaultModelName(channel) {
   return String(channel || '').trim().toLowerCase() === 'seedance'
@@ -116,6 +118,9 @@ function normalizeSettings(input) {
   const seconds = Number.isFinite(Number(payload.seconds))
     ? Math.max(4, Math.min(15, Math.round(Number(payload.seconds))))
     : 5;
+  const resolution = VALID_RESOLUTIONS.has(String(payload.resolution || '').trim())
+    ? String(payload.resolution).trim()
+    : DEFAULT_RESOLUTION;
   return {
     userDataDir: '动态分配账号槽位（执行侧）',
     channel: String(payload.channel || DEFAULT_CHANNEL).trim().toLowerCase() || DEFAULT_CHANNEL,
@@ -126,6 +131,7 @@ function normalizeSettings(input) {
       String(payload.modelName || resolveDefaultModelName(payload.channel || DEFAULT_CHANNEL)).trim()
       || resolveDefaultModelName(payload.channel || DEFAULT_CHANNEL),
     seconds,
+    resolution,
     taskType,
     priority,
     expireHours,
@@ -174,7 +180,7 @@ function resolveTargetMachineId(settings, device) {
   const fixed = String(
     process.env.FLOW_AUTO_GEN_MACHINE_ID || process.env.FLOW_TASK_TARGET_MACHINE_ID || '',
   ).trim();
-  return fixed || String(device?.machineId || '').trim() || null;
+  return fixed || null;
 }
 
 function pruneMessages() {
@@ -265,11 +271,15 @@ function buildRestoredReferenceImage(task) {
 
 function buildRestoredJobSettings(task, batch) {
   const inputPayload = task?.inputPayload && typeof task.inputPayload === 'object' ? task.inputPayload : {};
+  const params = inputPayload.params && typeof inputPayload.params === 'object' ? inputPayload.params : {};
+  const extraBody = params.extra_body && typeof params.extra_body === 'object' ? params.extra_body : {};
   return normalizeSettings({
     ...getCurrentSettings(),
     taskType: task?.taskType,
-    modelName: inputPayload.modelName,
+    modelName: inputPayload.modelName || params.channel_options?.model || params.model,
     aspectRatio: inputPayload.aspectRatio,
+    seconds: params.seconds,
+    resolution: extraBody.resolution,
     humanSpeedPreset: inputPayload.humanSpeedPreset,
     requiredAccountId: task?.requiredAccountProfile || '',
     priority: task?.priority || batch?.priority,
@@ -980,7 +990,6 @@ async function sendMessage(payload) {
   const device = deviceState.readDeviceState();
   if (!device.machineId || !device.token) throw new Error('设备未激活，无法提交任务');
   const targetMachineId = resolveTargetMachineId(settings, device);
-  if (!targetMachineId) throw new Error('目标执行机不能为空');
 
   const createdAt = nowIso();
   const jobId = makeId('job');
@@ -1094,6 +1103,7 @@ async function listChannels() {
   const response = await taskClient.listChannels();
   return {
     activated: true,
+    version: response?.version || null,
     channels: Array.isArray(response?.channels) ? response.channels : [],
   };
 }

@@ -6041,6 +6041,30 @@
             let refreshing = false;
             let currentChatState = null;
             let currentChatChannels = [];
+            const CHAT_CHANNEL_CONFIG_REFRESH_MS = 5 * 60 * 1000;
+            const DEFAULT_SEEDANCE_CLIENT_OPTIONS = {
+                models: [
+                    "dreamina-seedance-2-0-fast-260128",
+                    "dreamina-seedance-2-0-260128",
+                ],
+                sizes: ["16:9", "9:16", "1:1", "3:4", "4:3"],
+                seconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+                resolutions: ["480p", "720p", "1080p"],
+            };
+            const ASPECT_RATIO_BY_SIZE = {
+                "16:9": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+                "9:16": "IMAGE_ASPECT_RATIO_PORTRAIT",
+                "1:1": "IMAGE_ASPECT_RATIO_SQUARE",
+                "3:4": "IMAGE_ASPECT_RATIO_3_4",
+                "4:3": "IMAGE_ASPECT_RATIO_4_3",
+            };
+            const SIZE_BY_ASPECT_RATIO = {
+                IMAGE_ASPECT_RATIO_LANDSCAPE: "16:9",
+                IMAGE_ASPECT_RATIO_PORTRAIT: "9:16",
+                IMAGE_ASPECT_RATIO_SQUARE: "1:1",
+                IMAGE_ASPECT_RATIO_3_4: "3:4",
+                IMAGE_ASPECT_RATIO_4_3: "4:3",
+            };
 
             function resolveAvailableChatChannel(preferred) {
                 const preferredKey = String(preferred || "").trim();
@@ -6055,13 +6079,18 @@
                 return available[0] || preferredKey || "seedance";
             }
 
+            function getChatChannelConfig(channelKey) {
+                const key = String(channelKey || "").trim();
+                return Array.isArray(currentChatChannels)
+                    ? currentChatChannels.find(
+                          (item) => String(item?.key || "").trim() === key,
+                      ) || null
+                    : null;
+            }
+
             function resolveAvailableChatProvider(channelKey, preferred) {
                 const preferredKey = String(preferred || "").trim();
-                const channel = Array.isArray(currentChatChannels)
-                    ? currentChatChannels.find(
-                          (item) => String(item?.key || "").trim() === String(channelKey || "").trim(),
-                      )
-                    : null;
+                const channel = getChatChannelConfig(channelKey);
                 const providers = Array.isArray(channel?.providers)
                     ? channel.providers.filter((item) => item && item.enabled !== false)
                     : [];
@@ -6072,13 +6101,198 @@
                 return providerKeys[0] || preferredKey || "1";
             }
 
+            function normalizeStringOptions(value, fallback = []) {
+                const source = Array.isArray(value)
+                    ? value
+                    : typeof value === "string"
+                      ? value.split(/[\n,]/g)
+                      : [];
+                const items = source
+                    .map((item) => String(item || "").trim())
+                    .filter(Boolean);
+                return Array.from(new Set(items.length ? items : fallback));
+            }
+
+            function normalizeSecondOptions(value, fallback = []) {
+                const source = Array.isArray(value)
+                    ? value
+                    : typeof value === "string"
+                      ? value.split(/[\n,]/g)
+                      : [];
+                const items = source
+                    .map((item) => Number(item))
+                    .filter((item) => Number.isFinite(item))
+                    .map((item) => Math.max(4, Math.min(15, Math.round(item))));
+                return Array.from(new Set(items.length ? items : fallback));
+            }
+
+            function getChannelClientOptions(channelKey) {
+                const key = String(channelKey || "").trim().toLowerCase();
+                const channel = getChatChannelConfig(channelKey);
+                const raw = channel?.client_options && typeof channel.client_options === "object"
+                    ? channel.client_options
+                    : {};
+                const fallback = key === "seedance" ? DEFAULT_SEEDANCE_CLIENT_OPTIONS : {};
+                return {
+                    models: normalizeStringOptions(raw.models, fallback.models || []),
+                    sizes: normalizeStringOptions(raw.sizes, fallback.sizes || []),
+                    seconds: normalizeSecondOptions(raw.seconds, fallback.seconds || []),
+                    resolutions: normalizeStringOptions(raw.resolutions, fallback.resolutions || []),
+                };
+            }
+
+            function aspectRatioValueFromSize(size) {
+                const value = String(size || "").trim();
+                return ASPECT_RATIO_BY_SIZE[value] || value;
+            }
+
+            function getChannelDefaultParams(channelKey) {
+                const channel = getChatChannelConfig(channelKey);
+                const defaults = channel?.default_params && typeof channel.default_params === "object"
+                    ? channel.default_params
+                    : {};
+                const params = defaults.params && typeof defaults.params === "object"
+                    ? defaults.params
+                    : defaults;
+                const channelOptions = params.channel_options && typeof params.channel_options === "object"
+                    ? params.channel_options
+                    : {};
+                const extraBody = params.extra_body && typeof params.extra_body === "object"
+                    ? params.extra_body
+                    : {};
+                const rawAspectRatio = String(channelOptions.aspect_ratio || "").trim();
+                const size = String(params.size || channelOptions.size || "").trim();
+                return {
+                    modelName:
+                        String(params.model || channelOptions.model || channelOptions.model_name || "").trim(),
+                    aspectRatio: aspectRatioValueFromSize(rawAspectRatio || size),
+                    seconds: Number(params.seconds) || null,
+                    resolution: String(extraBody.resolution || "").trim(),
+                };
+            }
+
+            function setSelectOptions(id, options, preferredValue) {
+                const select = document.getElementById(id);
+                if (!select) return "";
+                const normalized = Array.isArray(options)
+                    ? options
+                          .map((item) => {
+                              if (item && typeof item === "object") {
+                                  return {
+                                      value: String(item.value || "").trim(),
+                                      label: String(item.label || item.value || "").trim(),
+                                  };
+                              }
+                              return {
+                                  value: String(item || "").trim(),
+                                  label: String(item || "").trim(),
+                              };
+                          })
+                          .filter((item) => item.value)
+                    : [];
+                const deduped = normalized.filter(
+                    (item, index, arr) => arr.findIndex((it) => it.value === item.value) === index,
+                );
+                if (!deduped.length) return select.value || "";
+                const values = deduped.map((item) => item.value);
+                const desired = String(preferredValue || "").trim();
+                const resolved = values.includes(desired) ? desired : values[0];
+                const signature = JSON.stringify(deduped);
+                if (select.dataset.optionSignature !== signature) {
+                    select.innerHTML = deduped
+                        .map((item) => `<option value="${esc(item.value)}">${esc(item.label || item.value)}</option>`)
+                        .join("");
+                    select.dataset.optionSignature = signature;
+                }
+                if (select.value !== resolved) select.value = resolved;
+                select.dataset.configInitialized = "1";
+                return resolved;
+            }
+
+            function preferredConfiguredValue(id, settingsValue, defaultValue, fallbackValue) {
+                const node = document.getElementById(id);
+                const initialized = node?.dataset.configInitialized === "1";
+                const domValue = String(node?.value || "").trim();
+                const setting = String(settingsValue || "").trim();
+                const configuredDefault = String(defaultValue || "").trim();
+                const fallback = String(fallbackValue || "").trim();
+                return initialized
+                    ? domValue || setting || configuredDefault || fallback
+                    : setting || configuredDefault || domValue || fallback;
+            }
+
+            function syncChatChannelSelect(preferred) {
+                const select = document.getElementById("chatChannel");
+                if (select && Array.isArray(currentChatChannels) && currentChatChannels.length) {
+                    const options = currentChatChannels
+                        .filter((item) => item && item.enabled !== false)
+                        .map((item) => ({
+                            value: String(item.key || "").trim(),
+                            label: String(item.label || item.key || "").trim(),
+                        }))
+                        .filter((item) => item.value);
+                    return setSelectOptions("chatChannel", options, resolveAvailableChatChannel(preferred || select.value));
+                }
+                const resolved = resolveAvailableChatChannel(preferred || select?.value || "");
+                if (select && resolved && select.value !== resolved) select.value = resolved;
+                return resolved;
+            }
+
+            function syncChatOptionControls(settings = {}) {
+                const channelKey = syncChatChannelSelect(settings.channel || document.getElementById("chatChannel")?.value || "");
+                const options = getChannelClientOptions(channelKey);
+                const defaults = getChannelDefaultParams(channelKey);
+                const modelFallback = options.models[0] || DEFAULT_SEEDANCE_CLIENT_OPTIONS.models[0];
+                const secondsFallback = options.seconds[0] || 5;
+                const sizeFallback = options.sizes[0] || "9:16";
+                const resolutionFallback = options.resolutions[0] || "720p";
+                setSelectOptions(
+                    "chatModel",
+                    options.models.map((value) => ({ value, label: value })),
+                    preferredConfiguredValue("chatModel", settings.modelName, defaults.modelName, modelFallback),
+                );
+                setSelectOptions(
+                    "chatVideoSeconds",
+                    options.seconds.map((value) => ({ value: String(value), label: `${value}s` })),
+                    preferredConfiguredValue("chatVideoSeconds", settings.seconds, defaults.seconds, secondsFallback),
+                );
+                setSelectOptions(
+                    "chatAspectRatio",
+                    options.sizes.map((size) => ({
+                        value: aspectRatioValueFromSize(size),
+                        label: SIZE_BY_ASPECT_RATIO[aspectRatioValueFromSize(size)] || size,
+                    })),
+                    preferredConfiguredValue(
+                        "chatAspectRatio",
+                        settings.aspectRatio,
+                        defaults.aspectRatio,
+                        aspectRatioValueFromSize(sizeFallback),
+                    ),
+                );
+                setSelectOptions(
+                    "chatResolution",
+                    options.resolutions.map((value) => ({ value, label: value })),
+                    preferredConfiguredValue("chatResolution", settings.resolution, defaults.resolution, resolutionFallback),
+                );
+                syncSeedanceControlVisibility(channelKey);
+            }
+
             function syncSeedanceControlVisibility(channelKey) {
-                const isSeedance = String(channelKey || "").trim().toLowerCase() === "seedance";
+                const key = String(channelKey || "").trim().toLowerCase();
+                const options = getChannelClientOptions(channelKey);
+                const showAll = key === "seedance";
+                const visibleById = {
+                    chatModel: showAll || options.models.length > 0,
+                    chatVideoSeconds: showAll || options.seconds.length > 0,
+                    chatAspectRatio: showAll || options.sizes.length > 0,
+                    chatResolution: showAll || options.resolutions.length > 0,
+                };
                 ["chatModel", "chatVideoSeconds", "chatAspectRatio", "chatResolution"].forEach((id) => {
                     const node = document.getElementById(id);
                     if (!node) return;
-                    node.hidden = !isSeedance;
-                    node.style.display = isSeedance ? "" : "none";
+                    const visible = Boolean(visibleById[id]);
+                    node.hidden = !visible;
+                    node.style.display = visible ? "" : "none";
                 });
             }
             let currentStatusSnapshot = null;
@@ -6144,6 +6358,12 @@
                 if (el.value !== next) el.value = next;
             }
 
+            function readVisibleInputValue(id) {
+                const el = document.getElementById(id);
+                if (!el || el.hidden || el.style.display === "none") return "";
+                return String(el.value || "").trim();
+            }
+
             function safeClone(value) {
                 if (typeof structuredClone === "function") {
                     return structuredClone(value);
@@ -6190,31 +6410,51 @@
 
             function collectChatSettings() {
                 const currentSettings = currentChatState?.settings || {};
+                const channel = syncChatChannelSelect(
+                    document.getElementById("chatChannel")?.value ||
+                        currentSettings.channel ||
+                        "",
+                );
+                syncChatOptionControls({
+                    ...currentSettings,
+                    channel,
+                });
+                const options = getChannelClientOptions(channel);
+                const defaults = getChannelDefaultParams(channel);
                 return {
                     userDataDir:
                         document.getElementById("chatUserDataDir")?.value?.trim() ||
                         currentSettings.userDataDir ||
                         "",
-                    channel:
-                        document.getElementById("chatChannel")?.value ||
-                        currentSettings.channel ||
-                        "flow",
+                    channel,
                     provider: resolveAvailableChatProvider(
-                        document.getElementById("chatChannel")?.value || currentSettings.channel || "seedance",
+                        channel,
                         currentSettings.provider || "1",
                     ),
                     modelName:
-                        document.getElementById("chatModel")?.value ||
+                        readVisibleInputValue("chatModel") ||
+                        defaults.modelName ||
+                        options.models[0] ||
                         currentSettings.modelName ||
                         "dreamina-seedance-2-0-fast-260128",
                     seconds:
-                        Number(document.getElementById("chatVideoSeconds")?.value || currentSettings.seconds || 5) || 5,
+                        Number(
+                            readVisibleInputValue("chatVideoSeconds") ||
+                                defaults.seconds ||
+                                options.seconds[0] ||
+                                currentSettings.seconds ||
+                                5,
+                        ) || 5,
                     resolution:
-                        document.getElementById("chatResolution")?.value ||
+                        readVisibleInputValue("chatResolution") ||
+                        defaults.resolution ||
+                        options.resolutions[0] ||
                         currentSettings.resolution ||
                         "720p",
                     aspectRatio:
-                        document.getElementById("chatAspectRatio")?.value ||
+                        readVisibleInputValue("chatAspectRatio") ||
+                        defaults.aspectRatio ||
+                        aspectRatioValueFromSize(options.sizes[0]) ||
                         currentSettings.aspectRatio ||
                         "IMAGE_ASPECT_RATIO_PORTRAIT",
                     humanSpeedPreset:
@@ -7416,39 +7656,7 @@
                 const settings = chat?.settings || {};
                 const inspection = chat?.inspection || {};
                 syncInputValue("chatUserDataDir", settings.userDataDir || "");
-                syncInputValue(
-                    "chatChannel",
-                    resolveAvailableChatChannel(settings.channel || "flow"),
-                );
-                syncSeedanceControlVisibility(
-                    resolveAvailableChatChannel(settings.channel || "flow"),
-                );
-                syncInputValue(
-                    "chatAspectRatio",
-                    settings.aspectRatio || "IMAGE_ASPECT_RATIO_PORTRAIT",
-                );
-                syncInputValue("chatResolution", settings.resolution || "720p");
-                syncInputValue(
-                    "chatModel",
-                    settings.modelName || "dreamina-seedance-2-0-fast-260128",
-                );
-                syncInputValue("chatVideoSeconds", String(settings.seconds || 5));
-                const modelSelect = document.getElementById("chatModel");
-                if (modelSelect && !modelSelect.value) {
-                    modelSelect.value = "dreamina-seedance-2-0-fast-260128";
-                }
-                const secondsSelect = document.getElementById("chatVideoSeconds");
-                if (secondsSelect && !secondsSelect.value) {
-                    secondsSelect.value = "5";
-                }
-                const ratioSelect = document.getElementById("chatAspectRatio");
-                if (ratioSelect && !ratioSelect.value) {
-                    ratioSelect.value = "IMAGE_ASPECT_RATIO_PORTRAIT";
-                }
-                const resolutionSelect = document.getElementById("chatResolution");
-                if (resolutionSelect && !resolutionSelect.value) {
-                    resolutionSelect.value = "720p";
-                }
+                syncChatOptionControls(settings);
                 syncInputValue(
                     "chatSpeedPreset",
                     settings.humanSpeedPreset || "balanced",
@@ -8357,7 +8565,10 @@
                     sendChatMessage();
                 });
             document.getElementById("chatChannel")?.addEventListener("change", (e) => {
-                syncSeedanceControlVisibility(e.target?.value || "");
+                syncChatOptionControls({
+                    ...(currentChatState?.settings || {}),
+                    channel: e.target?.value || "",
+                });
                 saveChatSettings();
             });
             ["chatModel", "chatVideoSeconds", "chatAspectRatio", "chatResolution"].forEach((id) => {
@@ -8368,6 +8579,30 @@
             document.getElementById("themeMode")?.addEventListener("change", (e) => {
                 persistThemeMode(e.target?.value || "system");
             });
+
+            async function refreshChatChannels({ silent = true } = {}) {
+                if (typeof api.listChatChannels !== "function") return null;
+                try {
+                    const resp = await api.listChatChannels();
+                    currentChatChannels = Array.isArray(resp?.channels)
+                        ? resp.channels
+                        : [];
+                    const currentSettings = currentChatState?.settings || {};
+                    syncChatOptionControls({
+                        ...currentSettings,
+                        channel:
+                            document.getElementById("chatChannel")?.value ||
+                            currentSettings.channel ||
+                            "",
+                    });
+                    return resp;
+                } catch (err) {
+                    if (!silent) {
+                        console.warn("刷新渠道配置失败", err);
+                    }
+                    return null;
+                }
+            }
 
             window.addEventListener("load", async () => {
                 applyThemeMode(getStoredThemeMode());
@@ -8387,28 +8622,7 @@
                     if (appRoot) appRoot.hidden = true;
                 }
                 renderChatReferenceState();
-                try {
-                    const resp =
-                        typeof api.listChatChannels === "function"
-                            ? await api.listChatChannels()
-                            : null;
-                    currentChatChannels = Array.isArray(resp?.channels)
-                        ? resp.channels
-                        : [];
-                    const select = document.getElementById("chatChannel");
-                    if (select && currentChatChannels.length) {
-                        select.innerHTML = currentChatChannels
-                            .map(
-                                (item) =>
-                                    `<option value="${esc(item.key)}">${esc(item.label || item.key)}</option>`,
-                            )
-                            .join("");
-                        const resolvedChannel = resolveAvailableChatChannel(
-                            currentChatState?.settings?.channel || select.value,
-                        );
-                        select.value = resolvedChannel;
-                    }
-                } catch {}
+                await refreshChatChannels({ silent: true });
                 await refreshAll({ silent: false });
                 try {
                     if (typeof api.onUpdateStatus === "function") {
@@ -8419,6 +8633,10 @@
                 } catch {}
                 if (!isStaticPreviewMode()) {
                     setInterval(() => refreshAll({ silent: true }), 3500);
+                    setInterval(
+                        () => refreshChatChannels({ silent: true }),
+                        CHAT_CHANNEL_CONFIG_REFRESH_MS,
+                    );
                 }
             });
         </script>
