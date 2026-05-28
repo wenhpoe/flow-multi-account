@@ -2180,6 +2180,7 @@
             .video-lightbox-shell {
                 display: grid;
                 grid-template-rows: auto 1fr;
+                grid-template-columns: minmax(0, 1fr);
                 min-height: 0;
                 height: 100%;
             }
@@ -2192,6 +2193,7 @@
                 padding: 18px 20px;
                 border-bottom: 1px solid var(--flow-video-lightbox-border, rgba(255, 255, 255, 0.08));
                 background: var(--flow-video-lightbox-head-bg, rgba(255, 255, 255, 0.02));
+                min-width: 0;
             }
 
             .video-lightbox-title {
@@ -2199,6 +2201,8 @@
                 font-size: 14px;
                 font-weight: 600;
                 word-break: break-word;
+                min-width: 0;
+                flex: 1 1 auto;
             }
 
             .video-lightbox-close {
@@ -2210,6 +2214,7 @@
                 color: var(--flow-video-lightbox-close-text, rgba(255, 255, 255, 0.92));
                 font-size: 18px;
                 cursor: pointer;
+                flex: 0 0 auto;
             }
 
             .video-lightbox-close:hover {
@@ -2222,6 +2227,7 @@
                 background: var(--flow-video-lightbox-stage-bg, #05060a);
                 display: grid;
                 grid-template-rows: minmax(0, 1fr) auto;
+                grid-template-columns: minmax(0, 1fr);
                 height: 100%;
             }
 
