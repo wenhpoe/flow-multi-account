@@ -5788,6 +5788,14 @@
                 box-shadow: 0 16px 32px rgba(47, 124, 255, 0.4);
             }
 
+            .composer-send:disabled,
+            .composer-send.is-submitting {
+                cursor: wait;
+                opacity: 0.68;
+                box-shadow: none;
+                transform: none;
+            }
+
             .composer-send .icon {
                 width: 18px;
                 height: 18px;
@@ -7142,6 +7150,7 @@
             let lastRenderedAssetLibrarySignature = "";
             let lastRenderedChatChromeSignature = "";
             let activationUiBusy = false;
+            let chatSendInFlight = false;
             const chatAssetCache = new Map();
             const chatAssetLoads = new Map();
             let chatAssetRenderRevision = 0;
@@ -9441,6 +9450,16 @@
                 });
             }
 
+            function setChatSendInFlight(active) {
+                chatSendInFlight = Boolean(active);
+                const button = document.getElementById("btnChatSend");
+                if (!button) return;
+                button.disabled = chatSendInFlight;
+                button.classList.toggle("is-submitting", chatSendInFlight);
+                button.setAttribute("aria-busy", chatSendInFlight ? "true" : "false");
+                button.title = chatSendInFlight ? "正在提交，请勿重复点击" : "开始生成";
+            }
+
             function populatePrompt(prompt) {
                 const value = String(prompt || "").trim();
                 if (!value) return;
@@ -10530,6 +10549,12 @@
             }
 
             async function sendChatMessage() {
+                if (chatSendInFlight) {
+                    setStatus("warn", "任务正在提交，请勿重复点击。", {
+                        autoHideMs: 2600,
+                    });
+                    return;
+                }
                 const prompt =
                     document.getElementById("chatPrompt")?.value?.trim() || "";
                 if (!prompt) {
@@ -10538,6 +10563,7 @@
                     });
                     return;
                 }
+                setChatSendInFlight(true);
                 try {
                     const selectedReferences = Array.isArray(chatPendingReferences)
                         ? chatPendingReferences.filter((item) => item?.dataUrl)
@@ -10553,6 +10579,14 @@
                         referenceImage: referencesForSubmit[0] || null,
                         referenceImages: referencesForSubmit,
                     });
+                    if (result?.duplicate) {
+                        setStatus("warn", result.message || "相同任务已在执行中，未重复提交。", {
+                            autoHideMs: 5200,
+                        });
+                        await refreshChatOnly({ silent: true });
+                        scheduleStatusRefresh();
+                        return;
+                    }
                     if (result && result.success === false) {
                         setStatus(
                             "err",
@@ -10570,6 +10604,8 @@
                     setStatus("err", err.message || "提交生成任务失败", {
                         autoHideMs: 9000,
                     });
+                } finally {
+                    setChatSendInFlight(false);
                 }
             }
 

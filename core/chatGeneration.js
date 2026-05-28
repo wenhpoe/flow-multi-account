@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -63,6 +64,48 @@ function makeId(prefix) {
 
 function safeClone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function hashText(value) {
+  return crypto.createHash('sha256').update(String(value || '')).digest('hex');
+}
+
+function buildReferenceSignature(referenceImages) {
+  const images = Array.isArray(referenceImages) ? referenceImages : [];
+  return images.map((image) => ({
+    name: String(image?.name || '').trim(),
+    dataHash: image?.dataUrl ? hashText(image.dataUrl) : '',
+    hasData: Boolean(image?.dataUrl),
+  }));
+}
+
+function buildSubmitSignature({ prompt, settings, targetMachineId, referenceImages }) {
+  const source = {
+    version: 1,
+    prompt: String(prompt || '').trim(),
+    targetMachineId: String(targetMachineId || '').trim(),
+    channel: String(settings?.channel || '').trim().toLowerCase(),
+    provider: String(settings?.provider || '').trim(),
+    taskType: String(settings?.taskType || '').trim(),
+    modelName: String(settings?.modelName || '').trim(),
+    aspectRatio: String(settings?.aspectRatio || '').trim(),
+    seconds: Number(settings?.seconds || 0) || 0,
+    resolution: String(settings?.resolution || '').trim(),
+    humanSpeedPreset: String(settings?.humanSpeedPreset || '').trim(),
+    requiredAccountId: String(settings?.requiredAccountId || '').trim(),
+    references: buildReferenceSignature(referenceImages),
+  };
+  return hashText(JSON.stringify(source));
+}
+
+function findActiveDuplicateJob(submitSignature) {
+  const signature = String(submitSignature || '').trim();
+  if (!signature) return null;
+  for (const job of runtime.jobs.values()) {
+    if (!job || isTerminalRemoteStatus(job.remoteStatus)) continue;
+    if (String(job.submitSignature || '') === signature) return job;
+  }
+  return null;
 }
 
 function sleep(ms) {
@@ -335,6 +378,7 @@ function buildRestoredConversation(batch, task, { sortOrderBase = 0 } = {}) {
   const createdAt = task?.createdAt || batch?.createdAt || nowIso();
   const jobId = String(batch?.idempotencyKey || batch?.id || task?.id || makeId('job')).trim();
   const referenceImage = buildRestoredReferenceImage(task);
+  const referenceImages = referenceImage ? [referenceImage] : [];
   const settings = buildRestoredJobSettings(task, batch);
   const assistantMessageId = `restored_assistant_${String(task?.id || jobId)}`;
   const userMessage = {
@@ -379,6 +423,13 @@ function buildRestoredConversation(batch, task, { sortOrderBase = 0 } = {}) {
     machineId: batch?.createdByMachineId || task?.createdByMachineId || null,
     targetMachineId: batch?.targetMachineId || task?.targetMachineId || null,
     referenceImage,
+    referenceImages,
+    submitSignature: buildSubmitSignature({
+      prompt,
+      settings,
+      targetMachineId: batch?.targetMachineId || task?.targetMachineId || null,
+      referenceImages,
+    }),
     settings,
     logs: [],
     batchId: batch?.id || null,
@@ -1154,14 +1205,29 @@ async function sendMessage(payload) {
   const device = deviceState.readDeviceState();
   if (!device.machineId || !device.token) throw new Error('设备未激活，无法提交任务');
   const targetMachineId = resolveTargetMachineId(settings, device);
+  const referenceImages = parseReferenceImages(payload);
+  const referenceImage = referenceImages[0] || null;
+  const referenceName = referenceNamesLabel(referenceImages);
+  const submitSignature = buildSubmitSignature({
+    prompt,
+    settings,
+    targetMachineId,
+    referenceImages,
+  });
+  const duplicateJob = findActiveDuplicateJob(submitSignature);
+  if (duplicateJob) {
+    return {
+      success: true,
+      duplicate: true,
+      jobId: duplicateJob.id,
+      message: '相同任务已在执行中，未重复提交。',
+    };
+  }
 
   const createdAt = nowIso();
   const jobId = makeId('job');
   const userMessageId = makeId('msg');
   const assistantMessageId = makeId('msg');
-  const referenceImages = parseReferenceImages(payload);
-  const referenceImage = referenceImages[0] || null;
-  const referenceName = referenceNamesLabel(referenceImages);
 
   pushMessage({
     id: userMessageId,
@@ -1206,6 +1272,7 @@ async function sendMessage(payload) {
     targetMachineId,
     referenceImage,
     referenceImages,
+    submitSignature,
     settings,
     logs: [],
     batchId: null,
