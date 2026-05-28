@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('flowApi', {
   quitBrowser: () => ipcRenderer.invoke('flow:quit'),
   getStatus: (opts) => ipcRenderer.invoke('app:status', opts || {}),
   checkUpdate: (opts) => ipcRenderer.invoke('update:check', opts || {}),
+  downloadUpdate: () => ipcRenderer.invoke('update:download'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
   openUpdateLog: () => ipcRenderer.invoke('update:openLog'),
   onUpdateStatus: (cb) => {

@@ -18,6 +18,7 @@ const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_RESOLUTION = '720p';
 const MAX_MESSAGES = 80;
 const MAX_LOG_LINES = 10;
+const MAX_SEEDANCE_REFERENCE_IMAGES = 9;
 const RESTORE_BATCH_LIMIT = Math.max(10, Math.floor(MAX_MESSAGES / 2));
 
 const VALID_ASPECT_RATIOS = new Set([
@@ -755,6 +756,7 @@ function parseReferenceImages(payload) {
     if (seen.has(key)) continue;
     seen.add(key);
     parsed.push(image);
+    if (parsed.length >= MAX_SEEDANCE_REFERENCE_IMAGES) break;
   }
   return parsed;
 }
@@ -849,7 +851,9 @@ async function registerReferenceAsset(job) {
 }
 
 async function registerReferenceAssets(job) {
-  const images = Array.isArray(job.referenceImages) ? job.referenceImages : [];
+  const images = Array.isArray(job.referenceImages)
+    ? job.referenceImages.slice(0, MAX_SEEDANCE_REFERENCE_IMAGES)
+    : [];
   if (!images.length) return [];
   const assets = [];
   for (let index = 0; index < images.length; index += 1) {

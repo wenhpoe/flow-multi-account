@@ -1647,7 +1647,11 @@
 
             .chat-result-card.is-overlay-open {
                 z-index: 80;
-                overflow: visible;
+                overflow: hidden;
+                /* Allow fixed-position prompt/menu to escape the card.
+                   `content-visibility: auto` creates a containing block + paint containment. */
+                content-visibility: visible;
+                contain: none;
             }
 
             .chat-result-card::before {
@@ -1735,7 +1739,7 @@
             .chat-result-menu,
             .chat-result-prompt {
                 position: absolute;
-                z-index: 30;
+                z-index: 300;
                 border-radius: 18px;
                 border: 1px solid rgba(255, 255, 255, 0.12);
                 background: rgba(10, 12, 16, 0.94);
@@ -2164,9 +2168,8 @@
             }
 
             .video-lightbox-card {
-                width: auto;
-                max-width: min(92vw, 1200px);
-                max-height: min(88vh, 860px);
+                width: min(92vw, 1200px);
+                height: min(88vh, 860px);
                 padding: 0;
                 overflow: hidden;
                 background: var(--flow-video-lightbox-bg, rgba(7, 8, 12, 0.96));
@@ -2178,6 +2181,7 @@
                 display: grid;
                 grid-template-rows: auto 1fr;
                 min-height: 0;
+                height: 100%;
             }
 
             .video-lightbox-head {
@@ -2216,23 +2220,42 @@
                 padding: 0;
                 min-height: 0;
                 background: var(--flow-video-lightbox-stage-bg, #05060a);
-                display: flex;
-                flex-direction: column;
+                display: grid;
+                grid-template-rows: minmax(0, 1fr) auto;
+                height: 100%;
             }
 
             .video-lightbox-stage {
-                flex: 1 1 auto;
                 min-height: 0;
                 display: grid;
                 place-items: center;
                 background: var(--flow-video-lightbox-stage-bg, #05060a);
+                padding: 14px 14px 16px;
+            }
+
+            .video-lightbox-stage-inner {
+                width: 100%;
+                height: 100%;
+                min-height: 0;
+                display: grid;
+                place-items: center;
+            }
+
+            /* When we know the actual video aspect ratio, constrain the stage to that ratio
+               and center it, so portrait videos don't look awkwardly letterboxed. */
+            .video-lightbox-stage-inner.has-ar {
+                max-width: 100%;
+                max-height: 100%;
+                aspect-ratio: var(--video-ar, 1);
             }
 
             .video-lightbox-body video {
                 display: block;
-                width: auto;
-                max-width: min(92vw, 1200px);
-                max-height: calc(88vh - 134px);
+                width: 100%;
+                height: 100%;
+                max-width: 100%;
+                max-height: 100%;
+                object-fit: contain;
                 background: var(--flow-video-lightbox-stage-bg, #05060a);
             }
 
@@ -2246,6 +2269,31 @@
                 padding: 13px 16px 15px;
                 border-top: 1px solid var(--flow-video-lightbox-border, rgba(255, 255, 255, 0.08));
                 background: var(--flow-video-lightbox-controls-bg, rgba(255, 255, 255, 0.035));
+            }
+
+            @media (max-width: 760px) {
+                .video-lightbox-card {
+                    max-width: calc(100vw - 20px);
+                    max-height: calc(100vh - 20px);
+                }
+
+                .video-lightbox-head {
+                    padding: 14px 14px;
+                }
+
+                .video-lightbox-stage {
+                    padding: 10px 10px 12px;
+                }
+
+                .video-lightbox-controls {
+                    grid-template-columns: auto 1fr auto;
+                    padding: 10px 12px 12px;
+                }
+
+                .video-lightbox-time {
+                    min-width: 84px;
+                    font-size: 11px;
+                }
             }
 
             .video-lightbox-play {
@@ -4063,6 +4111,28 @@
                 --flow-video-lightbox-shadow: 0 34px 90px rgba(0, 0, 0, 0.42);
             }
 
+            html[data-theme="dark"] .flow-nav-pages {
+                background: var(--flow-card-strong);
+            }
+
+            html[data-theme="dark"] .flow-nav-page {
+                background: var(--flow-card-strong);
+                box-shadow: none;
+                transform: none;
+            }
+
+            html[data-theme="dark"] .flow-nav-page:hover {
+                background: var(--flow-card-strong);
+                box-shadow: none;
+                transform: none;
+            }
+
+            html[data-theme="dark"] .flow-nav-page.is-active {
+                background: var(--flow-card-strong);
+                color: var(--flow-text);
+                box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+            }
+
             html,
             body {
                 height: 100%;
@@ -4221,6 +4291,48 @@
                 gap: 10px;
             }
 
+            .flow-nav-pages {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                padding: 4px;
+                border-radius: 999px;
+                border: 1px solid var(--flow-border);
+                background: rgba(255, 255, 255, 0.03);
+                box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+            }
+
+            .flow-nav-page {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 38px;
+                padding: 0 16px;
+                border: 0;
+                border-radius: 999px;
+                background: transparent;
+                color: var(--flow-text-faint);
+                font-size: 13px;
+                font-weight: 700;
+                cursor: pointer;
+                transition:
+                    background 160ms ease,
+                    color 160ms ease,
+                    transform 160ms ease,
+                    box-shadow 160ms ease;
+            }
+
+            .flow-nav-page:hover {
+                color: var(--flow-text);
+                background: rgba(255, 255, 255, 0.05);
+            }
+
+            .flow-nav-page.is-active {
+                color: var(--flow-primary-text);
+                background: var(--flow-cream);
+                box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+            }
+
             .flow-nav-settings {
                 display: inline-flex;
                 align-items: center;
@@ -4233,6 +4345,61 @@
                 color: var(--flow-text);
                 font-size: 13px;
                 cursor: pointer;
+            }
+
+            .flow-nav-update {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 38px;
+                height: 38px;
+                padding: 0;
+                border-radius: 999px;
+                border: 1px solid var(--flow-border);
+                background: var(--flow-card);
+                color: var(--flow-text);
+                cursor: pointer;
+                position: relative;
+                box-shadow: none;
+                transform: none;
+            }
+
+            .flow-nav-update:hover {
+                background: var(--flow-card-strong);
+                box-shadow: none;
+                transform: none;
+            }
+
+            .flow-nav-update::after {
+                content: "";
+                position: absolute;
+                top: 9px;
+                right: 9px;
+                width: 8px;
+                height: 8px;
+                border-radius: 999px;
+                background: rgba(34, 197, 94, 0.96);
+                box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12);
+                opacity: 0;
+                transform: scale(0.9);
+                transition: opacity 160ms ease, transform 160ms ease;
+            }
+
+            .flow-nav-update.is-available::after {
+                opacity: 1;
+                transform: scale(1);
+            }
+
+            .flow-nav-update.is-downloading::after {
+                background: rgba(96, 165, 250, 0.96);
+                opacity: 1;
+                transform: scale(1);
+            }
+
+            .flow-nav-update.is-downloaded::after {
+                background: rgba(245, 158, 11, 0.96);
+                opacity: 1;
+                transform: scale(1);
             }
 
             .flow-nav-settings:hover {
@@ -4325,6 +4492,146 @@
                 overflow: hidden;
                 position: relative;
                 gap: 0;
+            }
+
+            .asset-page-shell {
+                grid-template-rows: auto minmax(0, 1fr);
+                gap: 18px;
+            }
+
+            .asset-library-head {
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 20px;
+                flex-wrap: wrap;
+                padding: 4px 2px 0;
+            }
+
+            .asset-library-stats {
+                display: grid;
+                grid-template-columns: repeat(4, minmax(120px, 1fr));
+                gap: 10px;
+                min-width: min(100%, 560px);
+                flex: 1 1 560px;
+            }
+
+            .asset-library-stat {
+                display: grid;
+                gap: 8px;
+                padding: 16px 18px;
+                border-radius: 22px;
+                border: 1px solid var(--flow-border);
+                background:
+                    linear-gradient(
+                        180deg,
+                        rgba(255, 255, 255, 0.07),
+                        rgba(255, 255, 255, 0.03)
+                    );
+                box-shadow: 0 22px 54px rgba(0, 0, 0, 0.16);
+            }
+
+            .asset-library-stat-label {
+                color: var(--flow-text-faint);
+                font-size: 11px;
+                letter-spacing: 0.18em;
+                text-transform: uppercase;
+            }
+
+            .asset-library-stat-value {
+                color: var(--flow-text);
+                font-size: clamp(20px, 2vw, 28px);
+                font-weight: 800;
+                line-height: 1;
+            }
+
+            .asset-library-panel {
+                display: grid;
+                grid-template-rows: auto minmax(0, 1fr);
+                min-height: 0;
+                gap: 14px;
+                padding: 20px;
+                border-radius: 32px;
+                border: 1px solid var(--flow-border);
+                background:
+                    linear-gradient(
+                        180deg,
+                        rgba(255, 255, 255, 0.05),
+                        rgba(255, 255, 255, 0.02)
+                    );
+                box-shadow: 0 28px 76px rgba(0, 0, 0, 0.24);
+                backdrop-filter: blur(20px);
+            }
+
+            .asset-library-toolbar {
+                display: flex;
+                align-items: flex-end;
+                justify-content: space-between;
+                gap: 16px;
+                flex-wrap: wrap;
+            }
+
+            .asset-library-title-group {
+                display: grid;
+                gap: 6px;
+            }
+
+            .asset-library-title {
+                margin: 0;
+                color: var(--flow-text);
+                font-size: 18px;
+                font-weight: 800;
+            }
+
+            .asset-library-note {
+                color: var(--flow-text-soft);
+                font-size: 13px;
+                line-height: 1.6;
+            }
+
+            .asset-library-scroll {
+                min-height: 0;
+                overflow: auto;
+                padding-right: 4px;
+            }
+
+            .asset-library-grid.chat-result-grid {
+                grid-template-columns: repeat(auto-fill, minmax(172px, 1fr));
+                align-content: start;
+            }
+
+            .asset-library-groups {
+                display: grid;
+                gap: 16px;
+                padding-bottom: 6px;
+            }
+
+            .asset-day-group {
+                display: grid;
+                gap: 10px;
+            }
+
+            .asset-day-title {
+                padding: 0 2px;
+                color: var(--flow-text-faint);
+                font-size: 12px;
+                font-weight: 700;
+                letter-spacing: 0;
+                text-transform: none;
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco,
+                    Consolas, "Liberation Mono", "Courier New", monospace;
+            }
+
+            .asset-library-empty {
+                margin: 0;
+                min-height: 220px;
+                display: grid;
+                place-items: center;
+                text-align: center;
+                border-radius: 28px;
+                border: 1px dashed var(--flow-border);
+                color: var(--flow-text-soft);
+                background: rgba(255, 255, 255, 0.02);
             }
 
             .workspace-bento {
@@ -5885,6 +6192,12 @@
                     flex-direction: column;
                 }
 
+                .flow-nav-pages {
+                    width: 100%;
+                    justify-content: flex-start;
+                    flex-wrap: wrap;
+                }
+
                 .flow-nav-links {
                     width: 100%;
                     justify-content: flex-start;
@@ -5895,6 +6208,12 @@
                 .studio-layout,
                 .chat-compose-row {
                     grid-template-columns: 1fr;
+                }
+
+                .asset-library-stats {
+                    width: 100%;
+                    min-width: 0;
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
                 }
 
                 .references-F9DFuS.composer-reference-shell {
@@ -5948,6 +6267,15 @@
                     justify-content: center;
                 }
 
+                .asset-library-panel {
+                    padding: 16px;
+                    border-radius: 26px;
+                }
+
+                .asset-library-stats {
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                }
+
                 .references-F9DFuS.composer-reference-shell {
                     --reference-item-width: 46px;
                     top: 14px;
@@ -5988,6 +6316,11 @@
 
                 .workspace-kpi-grid,
                 .top-actions {
+                    grid-template-columns: 1fr;
+                }
+
+                .asset-library-grid.chat-result-grid,
+                .asset-library-stats {
                     grid-template-columns: 1fr;
                 }
 
@@ -6169,12 +6502,45 @@
                     <span class="flow-nav-divider" aria-hidden="true"></span>
                     <span class="flow-nav-title">Studio</span>
                 </div>
-                <div class="flow-nav-actions">
-                    <button type="button" class="flow-nav-settings" id="btnAppSettings">设置</button>
+                <div class="flow-nav-pages" role="tablist" aria-label="页面切换">
+                    <button
+                        type="button"
+                        class="flow-nav-page is-active"
+                        data-app-page-tab="home"
+                        aria-selected="true"
+                    >
+                        首页
+                    </button>
+                    <button
+                        type="button"
+                        class="flow-nav-page"
+                        data-app-page-tab="assets"
+                        aria-selected="false"
+                    >
+                        资产
+                    </button>
                 </div>
-            </header>
+	                <div class="flow-nav-actions">
+	                    <button
+	                        type="button"
+	                        class="flow-nav-update"
+	                        id="btnNavUpdate"
+	                        aria-label="升级客户端"
+	                        title="发现新版本"
+	                        hidden
+	                    >
+	                        ↑
+	                    </button>
+	                    <button type="button" class="flow-nav-settings" id="btnAppSettings">设置</button>
+	                </div>
+	            </header>
 
-            <section class="card main workspace-shell" aria-label="聊天工作台" id="overview">
+            <section
+                class="card main workspace-shell"
+                aria-label="聊天工作台"
+                id="overview"
+                data-app-page="home"
+            >
                 <div class="studio-layout" id="gallery">
                     <div class="panel chat-panel stream-shell" id="panelChat">
                         <div class="chat-stream" id="chatMessages"></div>
@@ -6383,6 +6749,56 @@
                     </div>
                 </div>
             </section>
+
+            <section
+                class="card main workspace-shell asset-page-shell"
+                aria-label="资产页面"
+                id="assetLibraryPage"
+                data-app-page="assets"
+                hidden
+            >
+                <div class="asset-library-head">
+                    <div class="asset-library-stats" aria-label="资产统计">
+                        <div class="asset-library-stat">
+                            <div class="asset-library-stat-label">总资产</div>
+                            <div class="asset-library-stat-value" id="assetStatTotal">0</div>
+                        </div>
+                        <div class="asset-library-stat">
+                            <div class="asset-library-stat-label">已完成</div>
+                            <div class="asset-library-stat-value" id="assetStatCompleted">0</div>
+                        </div>
+                        <div class="asset-library-stat">
+                            <div class="asset-library-stat-label">进行中</div>
+                            <div class="asset-library-stat-value" id="assetStatProcessing">0</div>
+                        </div>
+                        <div class="asset-library-stat">
+                            <div class="asset-library-stat-label">失败</div>
+                            <div class="asset-library-stat-value" id="assetStatFailed">0</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="asset-library-panel">
+                    <div class="asset-library-toolbar">
+                        <div class="asset-library-title-group">
+                            <h3 class="asset-library-title">资产列表</h3>
+                            <div class="asset-library-note" id="assetLibraryNote">
+                                当前还没有可浏览的资产。
+                            </div>
+                        </div>
+                    </div>
+	                    <div class="asset-library-scroll">
+	                        <div
+	                            class="asset-library-groups"
+	                            id="assetLibraryGrid"
+	                            hidden
+	                        ></div>
+	                        <div class="asset-library-empty" id="assetLibraryEmpty">
+	                            还没有生成资产。先在首页提交一个任务，结果会自动汇总到这里。
+	                        </div>
+	                    </div>
+	                </div>
+	            </section>
         </div>
 
         <script>
@@ -6427,15 +6843,16 @@
             })();
 
             // Enhance Electron API if available (desktop app mode)
-            if (window.flowApi) {
-                api.openDownloadsFolder = window.flowApi.openDownloadsFolder;
-                api.chooseDownloadsFolder = window.flowApi.chooseDownloadsFolder;
-                api.resetDownloadsFolder = window.flowApi.resetDownloadsFolder;
-                api.checkUpdate = window.flowApi.checkUpdate;
-                api.installUpdate = window.flowApi.installUpdate;
-                api.openUpdateLog = window.flowApi.openUpdateLog;
-                api.onUpdateStatus = window.flowApi.onUpdateStatus;
-                api.getChatState = window.flowApi.getChatState;
+	            if (window.flowApi) {
+	                api.openDownloadsFolder = window.flowApi.openDownloadsFolder;
+	                api.chooseDownloadsFolder = window.flowApi.chooseDownloadsFolder;
+	                api.resetDownloadsFolder = window.flowApi.resetDownloadsFolder;
+	                api.checkUpdate = window.flowApi.checkUpdate;
+	                api.downloadUpdate = window.flowApi.downloadUpdate;
+	                api.installUpdate = window.flowApi.installUpdate;
+	                api.openUpdateLog = window.flowApi.openUpdateLog;
+	                api.onUpdateStatus = window.flowApi.onUpdateStatus;
+	                api.getChatState = window.flowApi.getChatState;
                 api.listChatChannels = window.flowApi.listChatChannels;
                 api.updateChatSettings = window.flowApi.updateChatSettings;
                 api.sendChatMessage = window.flowApi.sendChatMessage;
@@ -6712,15 +7129,20 @@
             let currentStatusSnapshot = null;
             let chatPendingReferences = [];
             let previewChatStateCache = null;
+            let currentWorkspacePage = "home";
+            let currentAssetLibraryMessages = [];
             let lastRenderedChatRevision = "";
             let lastRenderedChatAssetRevision = -1;
+            let lastRenderedAssetLibrarySignature = "";
             let lastRenderedChatChromeSignature = "";
             let activationUiBusy = false;
             const chatAssetCache = new Map();
             const chatAssetLoads = new Map();
             let chatAssetRenderRevision = 0;
+            const MAX_SEEDANCE_REFERENCE_IMAGES = 9;
             const MAX_RENDERED_RESULT_VIDEOS = 40;
             const MAX_ANIMATED_PLACEHOLDERS = 4;
+            const APP_PAGE_STORAGE_KEY = "flow-studio-active-page";
             const THEME_STORAGE_KEY = "flow-studio-theme-mode";
 
             function isChatBusy(chat = currentChatState) {
@@ -6816,6 +7238,55 @@
                     // ignore
                 }
                 applyThemeMode(mode);
+            }
+
+            function normalizeWorkspacePage(page) {
+                return String(page || "").trim().toLowerCase() === "assets"
+                    ? "assets"
+                    : "home";
+            }
+
+            function getStoredWorkspacePage() {
+                try {
+                    return normalizeWorkspacePage(
+                        localStorage.getItem(APP_PAGE_STORAGE_KEY),
+                    );
+                } catch {
+                    return "home";
+                }
+            }
+
+            function setActiveWorkspacePage(page, { persist = true } = {}) {
+                const nextPage = normalizeWorkspacePage(page);
+                currentWorkspacePage = nextPage;
+                for (const section of document.querySelectorAll("[data-app-page]")) {
+                    section.hidden =
+                        String(section.getAttribute("data-app-page") || "") !==
+                        nextPage;
+                }
+                for (const button of document.querySelectorAll(
+                    "[data-app-page-tab]",
+                )) {
+                    const active =
+                        String(button.getAttribute("data-app-page-tab") || "") ===
+                        nextPage;
+                    button.classList.toggle("is-active", active);
+                    button.setAttribute("aria-selected", active ? "true" : "false");
+                }
+                closeResultOverlays();
+                if (nextPage !== "home") {
+                    pauseAllResultPreviewVideos({ reset: true });
+                    renderAssetLibraryFromMessages(
+                        currentAssetLibraryMessages,
+                        currentChatState,
+                    );
+                }
+                if (!persist) return;
+                try {
+                    localStorage.setItem(APP_PAGE_STORAGE_KEY, nextPage);
+                } catch {
+                    // ignore
+                }
             }
 
             function esc(str) {
@@ -6963,17 +7434,24 @@
                     : [];
                 const firstReference = references[0] || null;
                 const hasReference = references.length > 0;
+                const isReferenceFull = references.length >= MAX_SEEDANCE_REFERENCE_IMAGES;
                 if (label) {
                     label.innerHTML =
                         `<span class="label-ntjuL3 seedance-reference-label">参考${references.length > 1 ? ` ${references.length}` : ""}</span>`;
                 }
                 if (hint) {
-                    hint.textContent = hasReference
-                        ? `已选 ${references.length} 张，点击或拖入继续添加`
+                    hint.textContent = isReferenceFull
+                        ? `已选 ${references.length} 张，已达上限`
+                        : hasReference
+                        ? `已选 ${references.length} 张，最多 ${MAX_SEEDANCE_REFERENCE_IMAGES} 张`
                         : "点击或拖入参考图";
                 }
                 if (cta) {
-                    cta.textContent = hasReference ? "继续添加" : "选择参考";
+                    cta.textContent = isReferenceFull
+                        ? "已达上限"
+                        : hasReference
+                        ? "继续添加"
+                        : "选择参考";
                 }
                 if (preview) {
                     const dataUrl = firstReference?.dataUrl || "";
@@ -6985,15 +7463,19 @@
                     placeholder.hidden = hasReference;
                 }
                 if (clearBtn) clearBtn.hidden = !hasReference;
-                if (state) state.textContent = hasReference ? `${references.length}张` : "";
+                if (state) state.textContent = hasReference ? `${references.length}/${MAX_SEEDANCE_REFERENCE_IMAGES}` : "";
                 if (shell) {
                     shell.classList.toggle("has-file", hasReference);
+                    shell.classList.toggle("is-reference-full", isReferenceFull);
                     shell.classList.remove("is-dragging");
                 }
                 if (trigger) {
-                    trigger.title = hasReference
+                    trigger.title = isReferenceFull
+                        ? `最多支持 ${MAX_SEEDANCE_REFERENCE_IMAGES} 张参考图`
+                        : hasReference
                         ? references.map((item) => item.name).filter(Boolean).join("、") || "已选参考"
                         : "添加参考";
+                    trigger.setAttribute("aria-disabled", isReferenceFull ? "true" : "false");
                 }
                 if (heroReference) {
                     heroReference.textContent = hasReference
@@ -7007,11 +7489,20 @@
                 const state = document.getElementById("chatReferenceState");
                 const hint = document.getElementById("chatReferenceHint");
                 const cta = document.getElementById("chatReferenceCta");
+                const referenceCount = Array.isArray(chatPendingReferences)
+                    ? chatPendingReferences.filter((item) => item?.dataUrl).length
+                    : 0;
                 if (shell) shell.classList.toggle("is-dragging", Boolean(active));
                 if (active) {
-                    if (state) state.textContent = "拖入";
-                    if (hint) hint.textContent = "松手上传";
-                    if (cta) cta.textContent = "松手添加参考";
+                    if (referenceCount >= MAX_SEEDANCE_REFERENCE_IMAGES) {
+                        if (state) state.textContent = `${MAX_SEEDANCE_REFERENCE_IMAGES}/${MAX_SEEDANCE_REFERENCE_IMAGES}`;
+                        if (hint) hint.textContent = `最多支持 ${MAX_SEEDANCE_REFERENCE_IMAGES} 张参考图`;
+                        if (cta) cta.textContent = "已达上限";
+                    } else {
+                        if (state) state.textContent = "拖入";
+                        if (hint) hint.textContent = "松手上传";
+                        if (cta) cta.textContent = "松手添加参考";
+                    }
                     return;
                 }
                 renderChatReferenceState();
@@ -7270,6 +7761,107 @@
                 );
             }
 
+            function sortResultMessagesForGallery(resultMessages) {
+                return (Array.isArray(resultMessages) ? resultMessages : [])
+                    .map((message, index) => ({ message, index }))
+                    .sort((left, right) => {
+                        const byTime =
+                            messageTimeValue(right.message) -
+                            messageTimeValue(left.message);
+                        if (byTime) return byTime;
+                        return right.index - left.index;
+                    });
+            }
+
+            function collectResultGalleryAttachments(
+                resultMessages,
+                { maxCompletedVideos = Number.POSITIVE_INFINITY } = {},
+            ) {
+                const entries = sortResultMessagesForGallery(resultMessages);
+                const attachments = [];
+                for (const { message } of entries) {
+                    const meta =
+                        message?.meta && typeof message.meta === "object"
+                            ? message.meta
+                            : {};
+                    const promptText = promptForReuse(message);
+                    const createdAt = message?.createdAt || message?.updatedAt || "";
+                    const taskId = meta.taskId || "";
+                    const messageAttachments = Array.isArray(message?.attachments)
+                        ? message.attachments
+                        : [];
+                    if (!messageAttachments.length) {
+                        const placeholderStatus = resultPlaceholderStatus(message);
+                        if (placeholderStatus) {
+                            attachments.push({
+                                id: `placeholder_${String(
+                                    message?.id ||
+                                        message?.jobId ||
+                                        createdAt ||
+                                        Math.random(),
+                                ).replace(/[^a-zA-Z0-9_-]/g, "_")}`,
+                                name: "video-placeholder.mp4",
+                                mimeType: "video/mp4",
+                                size: 0,
+                                __chatPrompt: promptText,
+                                __chatTaskId: taskId,
+                                __chatCreatedAt: createdAt,
+                                __chatMessageId: message?.id || "",
+                                __chatPlaceholderStatus: placeholderStatus,
+                                __chatErrorText:
+                                    placeholderStatus === "failed"
+                                        ? errorTextForMessage(message)
+                                        : "",
+                            });
+                        }
+                        continue;
+                    }
+                    for (const attachment of messageAttachments) {
+                        attachments.push({
+                            ...attachment,
+                            __chatPrompt: promptText,
+                            __chatTaskId: taskId,
+                            __chatCreatedAt: createdAt,
+                            __chatMessageId: message?.id || "",
+                        });
+                    }
+                }
+
+                if (!Number.isFinite(maxCompletedVideos)) {
+                    return {
+                        entries,
+                        attachments,
+                    };
+                }
+
+                const limitedAttachments = [];
+                let renderedVideoCount = 0;
+                for (const attachment of attachments) {
+                    const placeholderStatus = String(
+                        attachment?.__chatPlaceholderStatus || "",
+                    )
+                        .trim()
+                        .toLowerCase();
+                    if (placeholderStatus) {
+                        limitedAttachments.push(attachment);
+                        continue;
+                    }
+                    if (!isVideoLikeAttachment(attachment)) {
+                        limitedAttachments.push(attachment);
+                        continue;
+                    }
+                    renderedVideoCount += 1;
+                    if (renderedVideoCount <= maxCompletedVideos) {
+                        limitedAttachments.push(attachment);
+                    }
+                }
+
+                return {
+                    entries,
+                    attachments: limitedAttachments,
+                };
+            }
+
             function splitFailedPlaceholderText(text) {
                 const raw = String(text || "").trim();
                 const codeMatch = raw.match(/(?:^|\n)\s*错误码[:：]\s*([^\n]+)/i);
@@ -7316,12 +7908,14 @@
                 promptText,
                 taskId,
                 createdAt,
+                { idPrefix = "" } = {},
             ) {
                 const dataUrl = assetDataUrlFor(attachment);
                 const externalUrl = toExternalAssetUrl(attachment);
                 const previewUrl = dataUrl || externalUrl;
                 const downloadUrl = dataUrl || externalUrl;
-                const attachmentId = resultCardIdForAttachment(attachment);
+                const cardIdBase = resultCardIdForAttachment(attachment);
+                const attachmentId = `${String(idPrefix || "")}${cardIdBase}`;
                 const placeholderStatus = String(
                     attachment?.__chatPlaceholderStatus || "",
                 )
@@ -7380,7 +7974,6 @@
                     ? isVideo
                         ? `<video class="hide-native-controls" src="${esc(previewUrl)}" playsinline preload="metadata" muted loop data-result-video-preview="1"></video>
                            <div class="chat-result-video-overlay">
-                               <div class="chat-result-video-play" aria-hidden="true"></div>
                                <div class="chat-result-video-hint">单击放大查看</div>
                            </div>`
                         : `<img src="${esc(previewUrl)}" alt="${esc(attachment?.name || "result")}" />`
@@ -7524,14 +8117,14 @@
                                     name: "campaign-portrait-a.png",
                                     size: 1237144,
                                     quality: "hero shot",
-                                    dataUrl: "/demo-assets/creative-result-a.png",
+                                    dataUrl: "/demo-assets/flow-result-a.png",
                                 },
                                 {
                                     id: "preview-asset-b",
                                     name: "campaign-portrait-b.png",
                                     size: 522587,
                                     quality: "editorial cut",
-                                    dataUrl: "/demo-assets/creative-result-b.png",
+                                    dataUrl: "/demo-assets/flow-result-b.png",
                                 },
                             ],
                             logs: [
@@ -7573,14 +8166,14 @@
                                     name: "campaign-detail-c.png",
                                     size: 553665,
                                     quality: "detail crop",
-                                    dataUrl: "/demo-assets/creative-result-c.png",
+                                    dataUrl: "/demo-assets/flow-result-c.png",
                                 },
                                 {
                                     id: "preview-asset-d",
                                     name: "campaign-hero-d.png",
                                     size: 667372,
                                     quality: "homepage hero",
-                                    dataUrl: "/demo-assets/creative-result-d.jpg",
+                                    dataUrl: "/demo-assets/flow-result-d.jpg",
                                 },
                             ],
                             logs: [
@@ -7704,6 +8297,30 @@
                 }
             }
 
+            function dayLabel(input) {
+                const s = String(input || "").trim();
+                if (!s) return "—";
+                const t = Date.parse(s);
+                if (!Number.isFinite(t)) {
+                    // Best-effort: if the string starts with YYYY-MM-DD, keep it.
+                    const m = s.match(/^\d{4}-\d{2}-\d{2}/);
+                    return m ? m[0] : s;
+                }
+                try {
+                    const parts = new Intl.DateTimeFormat("zh-CN", {
+                        timeZone: "Asia/Shanghai",
+                        year: "numeric",
+                        month: "2-digit",
+                        day: "2-digit",
+                    }).formatToParts(new Date(t));
+                    const get = (type) =>
+                        parts.find((p) => p.type === type)?.value || "";
+                    return `${get("year")}-${get("month")}-${get("day")}`;
+                } catch {
+                    return ts(s).slice(0, 10);
+                }
+            }
+
             function signatureForRenderedMessage(message) {
                 if (isMergedResultGalleryMessage(message)) {
                     const attachments = Array.isArray(message?.attachments)
@@ -7777,84 +8394,12 @@
             }
 
             function buildMergedResultGalleryMessage(resultMessages) {
-                const entries = resultMessages
-                    .map((message, index) => ({ message, index }))
-                    .sort((left, right) => {
-                        const byTime =
-                            messageTimeValue(right.message) -
-                            messageTimeValue(left.message);
-                        if (byTime) return byTime;
-                        return right.index - left.index;
-                    });
-                const attachments = [];
-                for (const { message } of entries) {
-                    const meta =
-                        message?.meta && typeof message.meta === "object"
-                            ? message.meta
-                            : {};
-                    const promptText = promptForReuse(message);
-                    const createdAt = message?.createdAt || message?.updatedAt || "";
-                    const taskId = meta.taskId || "";
-                    const messageAttachments = Array.isArray(message?.attachments)
-                        ? message.attachments
-                        : [];
-                    if (!messageAttachments.length) {
-                        const placeholderStatus = resultPlaceholderStatus(message);
-                        if (placeholderStatus) {
-                            attachments.push({
-                                id: `placeholder_${String(
-                                    message?.id ||
-                                        message?.jobId ||
-                                        createdAt ||
-                                        Math.random(),
-                                ).replace(/[^a-zA-Z0-9_-]/g, "_")}`,
-                                name: "video-placeholder.mp4",
-                                mimeType: "video/mp4",
-                                size: 0,
-                                __chatPrompt: promptText,
-                                __chatTaskId: taskId,
-                                __chatCreatedAt: createdAt,
-                                __chatMessageId: message?.id || "",
-                                __chatPlaceholderStatus: placeholderStatus,
-                                __chatErrorText:
-                                    placeholderStatus === "failed"
-                                        ? errorTextForMessage(message)
-                                        : "",
-                            });
-                        }
-                        continue;
-                    }
-                    for (const attachment of messageAttachments) {
-                        attachments.push({
-                            ...attachment,
-                            __chatPrompt: promptText,
-                            __chatTaskId: taskId,
-                            __chatCreatedAt: createdAt,
-                            __chatMessageId: message?.id || "",
-                        });
-                    }
-                }
-                const limitedAttachments = [];
-                let renderedVideoCount = 0;
-                for (const attachment of attachments) {
-                    const placeholderStatus = String(
-                        attachment?.__chatPlaceholderStatus || "",
-                    )
-                        .trim()
-                        .toLowerCase();
-                    if (placeholderStatus) {
-                        limitedAttachments.push(attachment);
-                        continue;
-                    }
-                    if (!isVideoLikeAttachment(attachment)) {
-                        limitedAttachments.push(attachment);
-                        continue;
-                    }
-                    renderedVideoCount += 1;
-                    if (renderedVideoCount <= MAX_RENDERED_RESULT_VIDEOS) {
-                        limitedAttachments.push(attachment);
-                    }
-                }
+                const { entries, attachments } = collectResultGalleryAttachments(
+                    resultMessages,
+                    {
+                        maxCompletedVideos: MAX_RENDERED_RESULT_VIDEOS,
+                    },
+                );
                 const first = entries[0]?.message || {};
                 return {
                     id: "__merged_result_gallery__",
@@ -7862,7 +8407,7 @@
                     status: "done",
                     createdAt: first.createdAt || first.updatedAt || "",
                     updatedAt: first.updatedAt || first.createdAt || "",
-                    attachments: limitedAttachments,
+                    attachments,
                     logs: [],
                     meta: {
                         mergedResultGallery: true,
@@ -7890,6 +8435,160 @@
 
             function isMergedResultGalleryMessage(message) {
                 return Boolean(message?.meta?.mergedResultGallery);
+            }
+
+            function buildAssetLibraryState(messages) {
+                const resultMessages = (Array.isArray(messages) ? messages : []).filter(
+                    isResultGalleryMessage,
+                );
+                const { attachments } = collectResultGalleryAttachments(
+                    resultMessages,
+                );
+                const completedCount = attachments.filter(
+                    (attachment) => !attachment?.__chatPlaceholderStatus,
+                ).length;
+                const processingCount = attachments.filter((attachment) => {
+                    const status = String(
+                        attachment?.__chatPlaceholderStatus || "",
+                    )
+                        .trim()
+                        .toLowerCase();
+                    return status === "queued" || status === "running";
+                }).length;
+                const failedCount = attachments.filter((attachment) => {
+                    const status = String(
+                        attachment?.__chatPlaceholderStatus || "",
+                    )
+                        .trim()
+                        .toLowerCase();
+                    return status === "failed";
+                }).length;
+                return {
+                    attachments,
+                    total: attachments.length,
+                    completedCount,
+                    processingCount,
+                    failedCount,
+                    latestAt:
+                        attachments[0]?.__chatCreatedAt ||
+                        attachments[0]?.createdAt ||
+                        "",
+                };
+            }
+
+            function signatureForAssetLibraryState(state) {
+                const payload = state && typeof state === "object" ? state : {};
+                const attachments = Array.isArray(payload.attachments)
+                    ? payload.attachments
+                    : [];
+                return JSON.stringify({
+                    total: Number(payload.total || 0),
+                    completedCount: Number(payload.completedCount || 0),
+                    processingCount: Number(payload.processingCount || 0),
+                    failedCount: Number(payload.failedCount || 0),
+                    latestAt: String(payload.latestAt || ""),
+                    attachments: attachments.map((attachment) =>
+                        signatureForResultAttachment(attachment),
+                    ),
+                });
+            }
+
+            function renderAssetLibraryFromMessages(
+                messages = currentAssetLibraryMessages,
+                chat = currentChatState,
+            ) {
+                currentAssetLibraryMessages = Array.isArray(messages)
+                    ? messages
+                    : [];
+                const grid = document.getElementById("assetLibraryGrid");
+                const empty = document.getElementById("assetLibraryEmpty");
+                const note = document.getElementById("assetLibraryNote");
+                const total = document.getElementById("assetStatTotal");
+                const completed = document.getElementById("assetStatCompleted");
+                const processing = document.getElementById("assetStatProcessing");
+                const failed = document.getElementById("assetStatFailed");
+                if (!grid || !empty) return;
+
+                const state = buildAssetLibraryState(currentAssetLibraryMessages);
+                const signature = signatureForAssetLibraryState(state);
+                if (signature === lastRenderedAssetLibrarySignature) return;
+
+                if (total) total.textContent = String(state.total);
+                if (completed) completed.textContent = String(state.completedCount);
+                if (processing) {
+                    processing.textContent = String(state.processingCount);
+                }
+                if (failed) failed.textContent = String(state.failedCount);
+
+                if (note) {
+                    const latestText =
+                        state.latestAt && state.latestAt !== "—"
+                            ? `最近更新：${ts(state.latestAt)}`
+                            : "还没有可浏览的资产";
+                    note.textContent = [
+                        latestText,
+                        `首页仅展示最近 ${MAX_RENDERED_RESULT_VIDEOS} 个已完成视频结果`,
+                        chat?.previewMode
+                            ? "当前为静态预览数据"
+                            : "资产页展示当前聊天历史中保留下来的全部结果与任务状态",
+                    ].join(" · ");
+                }
+
+                if (!state.attachments.length) {
+                    grid.hidden = true;
+                    grid.innerHTML = "";
+                    empty.hidden = false;
+                    lastRenderedAssetLibrarySignature = signature;
+                    return;
+                }
+
+                const groups = [];
+                const groupIndex = new Map();
+                for (const attachment of state.attachments) {
+                    const createdAt =
+                        attachment?.__chatCreatedAt || attachment?.createdAt || "";
+                    const key = dayLabel(createdAt);
+                    let idx = groupIndex.get(key);
+                    if (idx == null) {
+                        idx = groups.length;
+                        groupIndex.set(key, idx);
+                        groups.push({ day: key, attachments: [] });
+                    }
+                    groups[idx].attachments.push(attachment);
+                }
+
+                let cardIndex = 0;
+                grid.innerHTML = groups
+                    .map((group) => {
+                        const cards = group.attachments
+                            .map((attachment) => {
+                                const html = renderResultAttachmentCard(
+                                    attachment,
+                                    String(attachment?.__chatPrompt || ""),
+                                    String(attachment?.__chatTaskId || ""),
+                                    attachment?.__chatCreatedAt ||
+                                        attachment?.createdAt ||
+                                        "",
+                                    {
+                                        idPrefix: `assetlib_${cardIndex++}_`,
+                                    },
+                                );
+                                return html;
+                            })
+                            .join("");
+                        return `
+                            <section class="asset-day-group" data-asset-day="${esc(
+                                group.day,
+                            )}">
+                                <div class="asset-day-title">${esc(group.day)}</div>
+                                <div class="chat-result-grid asset-library-grid">${cards}</div>
+                            </section>
+                        `;
+                    })
+                    .join("");
+                grid.hidden = false;
+                empty.hidden = true;
+                lastRenderedAssetLibrarySignature = signature;
             }
 
             function chatMessageKeyFor(message, index) {
@@ -8401,12 +9100,62 @@
                 if (!st) return "—";
                 if (st === "idle") return "未检查";
                 if (st === "checking") return "检查中…";
-                if (st === "available") return "发现新版本，下载中…";
+                if (st === "available") return "发现新版本，等待下载";
                 if (st === "downloading") return "下载中…";
                 if (st === "downloaded") return "已下载，等待重启更新";
                 if (st === "none") return "已是最新版本";
                 if (st === "error") return "已是最新版本";
                 return st;
+            }
+
+            function normalizeUpdateState(raw) {
+                const st = String(raw || "").trim().toLowerCase();
+                if (!st) return "";
+                if (st === "idle") return "idle";
+                if (st === "checking") return "checking";
+                if (st === "available") return "available";
+                if (st === "downloading") return "downloading";
+                if (st === "downloaded") return "downloaded";
+                if (st === "none") return "none";
+                return st;
+            }
+
+            function currentUpdateState(status) {
+                const upd = status?.update || null;
+                const merged = {
+                    ...(upd && typeof upd === "object" ? upd : {}),
+                    ...(lastUpdateStatus && typeof lastUpdateStatus === "object"
+                        ? lastUpdateStatus
+                        : {}),
+                };
+                return normalizeUpdateState(merged?.state || merged?.status || "");
+            }
+
+            function renderNavUpdateIndicator(status) {
+                const btn = document.getElementById("btnNavUpdate");
+                if (!btn) return;
+                if (!window.flowApi) {
+                    btn.hidden = true;
+                    return;
+                }
+                const st = currentUpdateState(status);
+                const shouldShow = ["available", "downloading", "downloaded"].includes(
+                    st,
+                );
+                btn.hidden = !shouldShow;
+                btn.classList.toggle("is-available", st === "available");
+                btn.classList.toggle("is-downloading", st === "downloading");
+                btn.classList.toggle("is-downloaded", st === "downloaded");
+                const title =
+                    st === "available"
+                        ? "发现新版本，点击下载并安装"
+                        : st === "downloading"
+                          ? "正在下载更新…"
+                          : st === "downloaded"
+                            ? "更新已下载，点击安装"
+                            : "检查更新";
+                btn.title = title;
+                btn.setAttribute("aria-label", title);
             }
 
             function renderUpdateOverlay(status) {
@@ -8436,6 +9185,8 @@
 
                 const btnInstall = document.getElementById("btnUpdateInstall");
                 if (btnInstall) btnInstall.hidden = st !== "downloaded";
+
+                renderNavUpdateIndicator(status);
             }
 
             function openAppOverlay() {
@@ -8550,6 +9301,11 @@
                 const overlay = document.getElementById("videoLightbox");
                 const body = document.getElementById("videoLightboxBody");
                 if (!overlay || !body) return;
+                const onResize = overlay.__flowOnResize;
+                if (typeof onResize === "function") {
+                    window.removeEventListener("resize", onResize);
+                }
+                overlay.__flowOnResize = null;
                 const video = body.querySelector("video");
                 if (video) {
                     try {
@@ -8572,7 +9328,9 @@
                 title.textContent = String(name || "视频预览").trim() || "视频预览";
                 body.innerHTML = `
                     <div class="video-lightbox-stage">
-                        <video src="${esc(safeUrl)}" playsinline autoplay preload="metadata"></video>
+                        <div class="video-lightbox-stage-inner" id="videoLightboxStageInner">
+                            <video src="${esc(safeUrl)}" playsinline autoplay preload="metadata"></video>
+                        </div>
                     </div>
                     <div class="video-lightbox-controls" aria-label="视频播放进度控制">
                         <button class="video-lightbox-play" type="button" aria-label="暂停视频">Ⅱ</button>
@@ -8581,6 +9339,7 @@
                     </div>
                 `;
                 const video = body.querySelector("video");
+                const stageInner = body.querySelector("#videoLightboxStageInner");
                 const playButton = body.querySelector(".video-lightbox-play");
                 const progress = body.querySelector(".video-lightbox-progress");
                 const time = body.querySelector(".video-lightbox-time");
@@ -8599,10 +9358,46 @@
                     playButton.textContent = video.paused ? "▶" : "Ⅱ";
                     playButton.setAttribute("aria-label", video.paused ? "播放视频" : "暂停视频");
                 };
+                const layoutLightboxVideo = () => {
+                    if (!video || !stageInner) return;
+                    const vw = Number(video.videoWidth) || 0;
+                    const vh = Number(video.videoHeight) || 0;
+                    if (!vw || !vh) {
+                        stageInner.classList.remove("has-ar");
+                        stageInner.style.removeProperty("width");
+                        stageInner.style.removeProperty("height");
+                        stageInner.style.removeProperty("--video-ar");
+                        return;
+                    }
+                    const ar = vw / vh;
+                    stageInner.style.setProperty("--video-ar", String(ar));
+                    stageInner.classList.add("has-ar");
+                    // Fit into the available stage box while preserving aspect ratio.
+                    const stage = stageInner.parentElement;
+                    const stageW = stage?.clientWidth || 0;
+                    const stageH = stage?.clientHeight || 0;
+                    const style = stage ? getComputedStyle(stage) : null;
+                    const padX = style ? (parseFloat(style.paddingLeft || "0") + parseFloat(style.paddingRight || "0")) : 0;
+                    const padY = style ? (parseFloat(style.paddingTop || "0") + parseFloat(style.paddingBottom || "0")) : 0;
+                    const availW = Math.max(1, stageW - padX);
+                    const availH = Math.max(1, stageH - padY);
+                    let w = availW;
+                    let h = w / ar;
+                    if (h > availH) {
+                        h = availH;
+                        w = h * ar;
+                    }
+                    stageInner.style.width = `${Math.floor(w)}px`;
+                    stageInner.style.height = `${Math.floor(h)}px`;
+                };
                 video?.addEventListener("loadedmetadata", syncVideoControls);
+                video?.addEventListener("loadedmetadata", layoutLightboxVideo);
                 video?.addEventListener("timeupdate", syncVideoControls);
                 video?.addEventListener("play", syncVideoControls);
                 video?.addEventListener("pause", syncVideoControls);
+                // Keep layout stable when the window is resized.
+                const onResize = () => layoutLightboxVideo();
+                window.addEventListener("resize", onResize, { passive: true });
                 progress?.addEventListener("input", () => {
                     if (!video || !progress || !Number.isFinite(video.duration) || video.duration <= 0) return;
                     video.currentTime = (Number(progress.value || 0) / 1000) * video.duration;
@@ -8619,6 +9414,9 @@
                 });
                 syncVideoControls();
                 overlay.hidden = false;
+                // Cleanup handler is stored on overlay so closeVideoLightbox can remove it.
+                overlay.__flowOnResize = onResize;
+                requestAnimationFrame(() => layoutLightboxVideo());
             }
 
             function setPill({ kind, text }) {
@@ -8674,29 +9472,48 @@
                 const list = Array.from(files || []).filter(Boolean);
                 if (!list.length) return;
                 try {
-                    const nextItems = [];
-                    for (const file of list) {
-                        const item = await readReferenceFile(file);
-                        if (item?.dataUrl) nextItems.push(item);
-                    }
                     const existing = Array.isArray(chatPendingReferences)
-                        ? chatPendingReferences
+                        ? chatPendingReferences.filter((item) => item?.dataUrl).slice(0, MAX_SEEDANCE_REFERENCE_IMAGES)
                         : [];
                     const seen = new Set(
                         existing.map((item) => `${item.name}\n${item.dataUrl}`),
                     );
                     const merged = [...existing];
-                    for (const item of nextItems) {
+                    let acceptedCount = 0;
+                    let ignoredByLimit = 0;
+                    for (const file of list) {
+                        if (merged.length >= MAX_SEEDANCE_REFERENCE_IMAGES) {
+                            ignoredByLimit += 1;
+                            continue;
+                        }
+                        const item = await readReferenceFile(file);
+                        if (!item?.dataUrl) continue;
                         const key = `${item.name}\n${item.dataUrl}`;
                         if (seen.has(key)) continue;
                         seen.add(key);
                         merged.push(item);
+                        acceptedCount += 1;
                     }
                     chatPendingReferences = merged;
                     renderChatReferenceState();
-                    setStatus("ok", `已载入 ${nextItems.length} 张参考图，共 ${merged.length} 张`, {
-                        autoHideMs: 2600,
-                    });
+                    if (acceptedCount > 0) {
+                        const capped = ignoredByLimit > 0 || merged.length >= MAX_SEEDANCE_REFERENCE_IMAGES;
+                        setStatus(
+                            capped ? "warn" : "ok",
+                            capped
+                                ? `已载入 ${acceptedCount} 张参考图，共 ${merged.length}/${MAX_SEEDANCE_REFERENCE_IMAGES} 张；已达上限`
+                                : `已载入 ${acceptedCount} 张参考图，共 ${merged.length}/${MAX_SEEDANCE_REFERENCE_IMAGES} 张`,
+                            { autoHideMs: capped ? 5200 : 2600 },
+                        );
+                    } else if (merged.length >= MAX_SEEDANCE_REFERENCE_IMAGES) {
+                        setStatus("warn", `最多支持 ${MAX_SEEDANCE_REFERENCE_IMAGES} 张参考图，请先移除后再添加。`, {
+                            autoHideMs: 5200,
+                        });
+                    } else {
+                        setStatus("warn", "没有新的参考图可添加。", {
+                            autoHideMs: 3000,
+                        });
+                    }
                 } catch (err) {
                     setStatus("err", err.message || "读取参考失败", {
                         autoHideMs: 9000,
@@ -8722,11 +9539,25 @@
                     dataUrl,
                 };
                 const existing = Array.isArray(chatPendingReferences)
-                    ? chatPendingReferences
+                    ? chatPendingReferences.filter((item) => item?.dataUrl).slice(0, MAX_SEEDANCE_REFERENCE_IMAGES)
                     : [];
+                if (existing.length >= MAX_SEEDANCE_REFERENCE_IMAGES) {
+                    setStatus("warn", `最多支持 ${MAX_SEEDANCE_REFERENCE_IMAGES} 张参考图，请先移除后再添加。`, {
+                        autoHideMs: 5200,
+                    });
+                    return;
+                }
+                const nextKey = `${nextItem.name}\n${nextItem.dataUrl}`;
+                const exists = existing.some((item) => `${item.name}\n${item.dataUrl}` === nextKey);
+                if (exists) {
+                    setStatus("warn", "这张图片已经在参考图列表中。", {
+                        autoHideMs: 3000,
+                    });
+                    return;
+                }
                 chatPendingReferences = [...existing, nextItem];
                 renderChatReferenceState();
-                setStatus("ok", `已添加 ${name || "该图片"} 为参考，共 ${chatPendingReferences.length} 张`, {
+                setStatus("ok", `已添加 ${name || "该图片"} 为参考，共 ${chatPendingReferences.length}/${MAX_SEEDANCE_REFERENCE_IMAGES} 张`, {
                     autoHideMs: 2600,
                 });
             }
@@ -8891,6 +9722,15 @@
                     !queueCount
                         ? buildPreviewResultMessages()
                         : [];
+                currentAssetLibraryMessages = visibleMessages.length
+                    ? visibleMessages
+                    : fallbackMessages;
+                if (currentWorkspacePage === "assets") {
+                    renderAssetLibraryFromMessages(
+                        currentAssetLibraryMessages,
+                        chat,
+                    );
+                }
                 const renderedMessages = arrangeRenderedMessages(
                     visibleMessages.length ? visibleMessages : fallbackMessages,
                 );
@@ -9550,6 +10390,51 @@
                         });
                     }
                 });
+
+            document
+                .getElementById("btnNavUpdate")
+                ?.addEventListener("click", async () => {
+                    try {
+                        if (!window.flowApi) {
+                            setStatus(
+                                "warn",
+                                "当前运行在网页模式，无法更新（请使用安装版应用）。",
+                                { autoHideMs: 9000 },
+                            );
+                            return;
+                        }
+                        const st = currentUpdateState(currentStatusSnapshot);
+                        if (st === "downloaded") {
+                            await api.installUpdate?.();
+                            return;
+                        }
+                        if (st === "downloading") {
+                            setStatus("warn", "正在下载更新…", {
+                                autoHideMs: 1800,
+                            });
+                            return;
+                        }
+                        if (st === "available") {
+                            if (typeof api.downloadUpdate !== "function") {
+                                setStatus("warn", "当前版本不支持一键下载更新", {
+                                    autoHideMs: 4500,
+                                });
+                                return;
+                            }
+                            setStatus("warn", "开始下载更新…", {
+                                autoHideMs: 2200,
+                            });
+                            await api.downloadUpdate();
+                            return;
+                        }
+                        // Fallback: trigger a check, then the icon will re-render when status arrives.
+                        await api.checkUpdate?.({ allowPrerelease: false });
+                    } catch (e) {
+                        setStatus("warn", e?.message || "更新失败", {
+                            autoHideMs: 6000,
+                        });
+                    }
+                });
             document
                 .getElementById("btnChangeDownloads")
                 ?.addEventListener("click", async () => {
@@ -9648,11 +10533,19 @@
                     return;
                 }
                 try {
+                    const selectedReferences = Array.isArray(chatPendingReferences)
+                        ? chatPendingReferences.filter((item) => item?.dataUrl)
+                        : [];
+                    const referencesForSubmit = selectedReferences.slice(0, MAX_SEEDANCE_REFERENCE_IMAGES);
+                    if (selectedReferences.length !== referencesForSubmit.length) {
+                        chatPendingReferences = referencesForSubmit;
+                        renderChatReferenceState();
+                    }
                     const result = await api.sendChatMessage({
                         prompt,
                         settings: collectChatSettings(),
-                        referenceImage: chatPendingReferences[0] || null,
-                        referenceImages: chatPendingReferences,
+                        referenceImage: referencesForSubmit[0] || null,
+                        referenceImages: referencesForSubmit,
                     });
                     if (result && result.success === false) {
                         setStatus(
@@ -9755,9 +10648,31 @@
                 });
             document
                 .getElementById("btnChatPickReference")
+                ?.addEventListener("click", (e) => {
+                    const count = Array.isArray(chatPendingReferences)
+                        ? chatPendingReferences.filter((item) => item?.dataUrl).length
+                        : 0;
+                    if (count < MAX_SEEDANCE_REFERENCE_IMAGES) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setStatus("warn", `最多支持 ${MAX_SEEDANCE_REFERENCE_IMAGES} 张参考图，请先移除后再添加。`, {
+                        autoHideMs: 5200,
+                    });
+                });
+            document
+                .getElementById("btnChatPickReference")
                 ?.addEventListener("keydown", (e) => {
                     if (e.key !== "Enter" && e.key !== " ") return;
                     e.preventDefault();
+                    const count = Array.isArray(chatPendingReferences)
+                        ? chatPendingReferences.filter((item) => item?.dataUrl).length
+                        : 0;
+                    if (count >= MAX_SEEDANCE_REFERENCE_IMAGES) {
+                        setStatus("warn", `最多支持 ${MAX_SEEDANCE_REFERENCE_IMAGES} 张参考图，请先移除后再添加。`, {
+                            autoHideMs: 5200,
+                        });
+                        return;
+                    }
                     document.getElementById("chatReferenceInput")?.click();
                 });
             const referenceShell = document.getElementById("chatReferenceShell");
@@ -9820,6 +10735,13 @@
             document.getElementById("themeMode")?.addEventListener("change", (e) => {
                 persistThemeMode(e.target?.value || "system");
             });
+            document.querySelectorAll("[data-app-page-tab]").forEach((button) => {
+                button.addEventListener("click", () => {
+                    setActiveWorkspacePage(
+                        button.getAttribute("data-app-page-tab") || "home",
+                    );
+                });
+            });
 
             async function refreshChatChannels({ silent = true } = {}) {
                 if (typeof api.listChatChannels !== "function") return null;
@@ -9851,6 +10773,9 @@
 
             window.addEventListener("load", async () => {
                 applyThemeMode(getStoredThemeMode());
+                setActiveWorkspacePage(getStoredWorkspacePage(), {
+                    persist: false,
+                });
                 try {
                     const media = window.matchMedia("(prefers-color-scheme: dark)");
                     const handleThemeChange = () => {

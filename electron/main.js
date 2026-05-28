@@ -56,7 +56,8 @@ function setupAutoUpdate(mainWindow) {
     return;
   }
 
-  autoUpdater.autoDownload = true;
+  // Only check automatically. Download/install should be user-triggered from the UI.
+  autoUpdater.autoDownload = false;
 
   const logPath = (() => {
     try {
@@ -103,21 +104,6 @@ function setupAutoUpdate(mainWindow) {
     const v = info?.version || null;
     log(`update-available version=${v || ''}`);
     sendStatus({ state: 'available', version: v, releaseName: info?.releaseName || null });
-
-    if (hasShownAvailable) return;
-    hasShownAvailable = true;
-    try {
-      await dialog.showMessageBox(mainWindow, {
-        type: 'info',
-        title: '发现新版本',
-        message: `发现新版本 ${v || ''}，正在后台下载…`,
-        buttons: ['知道了'],
-        defaultId: 0,
-        noLink: true,
-      });
-    } catch {
-      // ignore
-    }
   });
   autoUpdater.on('update-not-available', (info) => {
     const v = info?.version || null;
@@ -148,26 +134,6 @@ function setupAutoUpdate(mainWindow) {
   autoUpdater.on('update-downloaded', async (info) => {
     log(`update-downloaded version=${info?.version || ''}`);
     sendStatus({ state: 'downloaded', version: info?.version || null });
-    try {
-      const r = await dialog.showMessageBox(mainWindow, {
-        type: 'info',
-        title: '发现新版本',
-        message: `已下载新版本 ${info?.version || ''}，是否立即重启更新？`,
-        buttons: ['立即重启', '稍后'],
-        defaultId: 0,
-        cancelId: 1,
-        noLink: true,
-      });
-      if (r.response === 0) {
-        try {
-          autoUpdater.quitAndInstall();
-        } catch (e) {
-          log(`quitAndInstall failed: ${e?.message || e}`);
-        }
-      }
-    } catch {
-      // ignore
-    }
   });
 
   autoUpdater.checkForUpdates().catch((e) => {
@@ -189,6 +155,15 @@ function setupAutoUpdate(mainWindow) {
       }
       // Never surface update errors to the UI; logs are available in auto-update.log.
       return { ok: true };
+    },
+    download: async () => {
+      try {
+        await autoUpdater.downloadUpdate();
+        return { ok: true };
+      } catch (e) {
+        log(`downloadUpdate failed: ${e?.message || e}`);
+        return { ok: false, error: e?.message || String(e) };
+      }
     },
     install: async () => {
       try {
@@ -538,6 +513,14 @@ ipcMain.handle('update:check', async (_evt, opts) => {
   if (!autoUpdateCtl) return { ok: false, error: 'auto update not available' };
   try {
     return await autoUpdateCtl.check(opts && typeof opts === 'object' ? opts : {});
+  } catch (e) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+});
+ipcMain.handle('update:download', async () => {
+  if (!autoUpdateCtl) return { ok: false, error: 'auto update not available' };
+  try {
+    return await autoUpdateCtl.download();
   } catch (e) {
     return { ok: false, error: e?.message || String(e) };
   }
