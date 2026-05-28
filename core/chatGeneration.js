@@ -45,6 +45,9 @@ const runtime = {
   hydrated: false,
   hydrationPromise: null,
   lastHydratedAt: null,
+  stateRevision: 0,
+  stateCache: null,
+  stateCacheKey: '',
 };
 
 const FIXED_EXECUTOR_SERVICE = 'auto-gen';
@@ -63,6 +66,12 @@ function safeClone(value) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function markStateDirty() {
+  runtime.stateRevision += 1;
+  runtime.stateCache = null;
+  runtime.stateCacheKey = '';
 }
 
 function sanitizeFilename(name) {
@@ -157,6 +166,7 @@ function persistSettings(next) {
   const normalized = normalizeSettings(next);
   runtime.settingsOverride = normalized;
   writeSettings({ chatGeneration: normalized });
+  markStateDirty();
   return normalized;
 }
 
@@ -205,6 +215,7 @@ function cleanupAssets() {
 function pushMessage(message) {
   runtime.messages.push(message);
   pruneMessages();
+  markStateDirty();
   return message;
 }
 
@@ -221,7 +232,20 @@ function updateMessage(messageId, patch) {
     ...patch,
     updatedAt: nowIso(),
   };
+  markStateDirty();
   return runtime.messages[index];
+}
+
+function storeJob(jobId, job) {
+  runtime.jobs.set(String(jobId), job);
+  markStateDirty();
+  return job;
+}
+
+function deleteJob(jobId) {
+  const removed = runtime.jobs.delete(String(jobId));
+  if (removed) markStateDirty();
+  return removed;
 }
 
 function compareIsoValues(left, right) {
@@ -378,6 +402,7 @@ function mergeMessages(messages) {
   const next = Array.isArray(messages) ? messages.filter(Boolean) : [];
   runtime.messages = sortMessagesByCreatedAt([...runtime.messages, ...next]).slice(-MAX_MESSAGES);
   cleanupAssets();
+  markStateDirty();
 }
 
 function appendJobLog(job, line) {
@@ -985,7 +1010,7 @@ async function watchRemoteJob(job, { submit = false } = {}) {
     });
   } finally {
     job.isPolling = false;
-    runtime.jobs.delete(job.id);
+    deleteJob(job.id);
   }
 }
 
@@ -1036,11 +1061,12 @@ async function ensureHydrated() {
     for (const entry of restoredConversations) {
       refreshJobMessage(entry.job, entry.batch);
       if (isTerminalRemoteStatus(entry.task?.status)) continue;
-      runtime.jobs.set(entry.job.id, entry.job);
+      storeJob(entry.job.id, entry.job);
       startRemoteJob(entry.job);
     }
     runtime.hydrated = true;
     runtime.lastHydratedAt = nowIso();
+    markStateDirty();
   })();
   try {
     await runtime.hydrationPromise;
@@ -1056,10 +1082,22 @@ async function getState() {
     console.warn(`[chatGeneration] hydrate failed: ${err?.message || err}`);
   }
   const settings = getCurrentSettings();
+  const device = deviceState.readDeviceState();
+  const stateCacheKey = JSON.stringify({
+    revision: runtime.stateRevision,
+    settings,
+    machineId: device.machineId || null,
+    token: device.token || null,
+    serverUrl: device.serverUrl || null,
+  });
+  if (runtime.stateCache && runtime.stateCacheKey === stateCacheKey) {
+    return runtime.stateCache;
+  }
   const jobs = Array.from(runtime.jobs.values()).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
   const pendingJobs = jobs.filter((job) => !isTerminalRemoteStatus(job.remoteStatus));
   const active = pendingJobs.find((job) => String(job.remoteStatus || '') === 'running') || pendingJobs[0] || null;
-  return safeClone({
+  const state = {
+    revision: runtime.stateRevision,
     settings,
     inspection: inspectSettings(settings),
     activeJobId: active ? active.id : null,
@@ -1072,7 +1110,10 @@ async function getState() {
       })),
     busy: pendingJobs.length > 0,
     messages: runtime.messages,
-  });
+  };
+  runtime.stateCache = state;
+  runtime.stateCacheKey = stateCacheKey;
+  return state;
 }
 
 function updateSettings(patch) {
@@ -1178,7 +1219,7 @@ async function sendMessage(payload) {
     lastArtifactCount: 0,
     isPolling: false,
   };
-  runtime.jobs.set(jobId, job);
+  storeJob(jobId, job);
   startRemoteJob(job, { submit: true });
 
   return {
@@ -1235,6 +1276,7 @@ function clearHistory() {
   runtime.assets.clear();
   runtime.hydrated = true;
   runtime.hydrationPromise = null;
+  markStateDirty();
   return { success: true };
 }
 

@@ -1640,6 +1640,9 @@
                 background: var(--flow-result-card-bg);
                 box-shadow: var(--flow-result-card-shadow);
                 isolation: isolate;
+                contain: layout paint style;
+                content-visibility: auto;
+                contain-intrinsic-size: 188px 334px;
             }
 
             .chat-result-card.is-overlay-open {
@@ -1996,6 +1999,13 @@
                 opacity: 0.66;
             }
 
+            .chat-result-media.is-passive-placeholder .chat-result-placeholder-blur {
+                animation: none;
+                filter: blur(10px);
+                opacity: 0.34;
+                transform: none;
+            }
+
             .chat-result-placeholder-content {
                 position: absolute;
                 inset: 0;
@@ -2089,6 +2099,10 @@
                 border-radius: inherit;
                 background: rgba(255, 255, 255, 0.78);
                 animation: result-placeholder-loader 1.2s ease-in-out infinite;
+            }
+
+            .chat-result-media.is-passive-placeholder .chat-result-placeholder-loader {
+                display: none;
             }
 
             @keyframes result-placeholder-drift {
@@ -6429,11 +6443,19 @@
                 api.getChatAssetData = window.flowApi.getChatAssetData;
             }
 
-            let statusTimer = null;
+            let statusRefreshTimer = null;
+            let chatRefreshTimer = null;
             let refreshing = false;
+            let chatRefreshing = false;
             let currentChatState = null;
             let currentChatChannels = [];
             const CHAT_CHANNEL_CONFIG_REFRESH_MS = 5 * 60 * 1000;
+            const CHAT_ACTIVE_REFRESH_MS = 1500;
+            const CHAT_IDLE_REFRESH_MS = 6000;
+            const STATUS_ACTIVE_REFRESH_MS = 15000;
+            const STATUS_IDLE_REFRESH_MS = 30000;
+            const HIDDEN_REFRESH_MULTIPLIER = 3;
+            const MAX_BACKGROUND_REFRESH_MS = 60000;
             const DEFAULT_SEEDANCE_CLIENT_OPTIONS = {
                 models: [
                     "dreamina-seedance-2-0-fast-260128",
@@ -6690,11 +6712,74 @@
             let currentStatusSnapshot = null;
             let chatPendingReferences = [];
             let previewChatStateCache = null;
-            let lastRenderedMessagesSignature = "";
+            let lastRenderedChatRevision = "";
+            let lastRenderedChatAssetRevision = -1;
+            let lastRenderedChatChromeSignature = "";
             let activationUiBusy = false;
             const chatAssetCache = new Map();
             const chatAssetLoads = new Map();
+            let chatAssetRenderRevision = 0;
+            const MAX_RENDERED_RESULT_VIDEOS = 40;
+            const MAX_ANIMATED_PLACEHOLDERS = 4;
             const THEME_STORAGE_KEY = "flow-studio-theme-mode";
+
+            function isChatBusy(chat = currentChatState) {
+                return Boolean(
+                    chat?.activeJobId ||
+                        (Array.isArray(chat?.queue) && chat.queue.length),
+                );
+            }
+
+            function scaledRefreshMs(baseMs) {
+                if (document.visibilityState !== "hidden") return baseMs;
+                return Math.min(
+                    MAX_BACKGROUND_REFRESH_MS,
+                    Math.round(baseMs * HIDDEN_REFRESH_MULTIPLIER),
+                );
+            }
+
+            function nextChatRefreshMs() {
+                return scaledRefreshMs(
+                    isChatBusy() ? CHAT_ACTIVE_REFRESH_MS : CHAT_IDLE_REFRESH_MS,
+                );
+            }
+
+            function nextStatusRefreshMs() {
+                return scaledRefreshMs(
+                    isChatBusy()
+                        ? STATUS_ACTIVE_REFRESH_MS
+                        : STATUS_IDLE_REFRESH_MS,
+                );
+            }
+
+            function clearTimer(timerId) {
+                if (timerId) clearTimeout(timerId);
+                return null;
+            }
+
+            function scheduleChatRefresh(delayMs = nextChatRefreshMs()) {
+                chatRefreshTimer = clearTimer(chatRefreshTimer);
+                if (isStaticPreviewMode()) return;
+                chatRefreshTimer = window.setTimeout(() => {
+                    chatRefreshTimer = null;
+                    refreshChatOnly({ silent: true }).catch(() => {});
+                }, Math.max(500, Number(delayMs) || CHAT_IDLE_REFRESH_MS));
+            }
+
+            function scheduleStatusRefresh(delayMs = nextStatusRefreshMs()) {
+                statusRefreshTimer = clearTimer(statusRefreshTimer);
+                if (isStaticPreviewMode()) return;
+                statusRefreshTimer = window.setTimeout(() => {
+                    statusRefreshTimer = null;
+                    refreshAll({ silent: true }).catch(() => {});
+                }, Math.max(1000, Number(delayMs) || STATUS_IDLE_REFRESH_MS));
+            }
+
+            function rescheduleRefreshLoops() {
+                if (isStaticPreviewMode()) return;
+                scheduleChatRefresh();
+                scheduleStatusRefresh();
+            }
 
             function getSystemThemeMode() {
                 try {
@@ -7109,8 +7194,27 @@
             }
 
             function resultAttachmentSignaturePayload(attachment) {
+                const attachmentId = String(attachment?.id || "");
+                const embeddedDataUrl = String(attachment?.dataUrl || "").trim();
+                const cachedDataUrl = attachmentId
+                    ? String(chatAssetCache.get(attachmentId) || "").trim()
+                    : "";
+                const remoteUrl = String(attachment?.remoteUrl || "").trim();
+                const filePath = String(attachment?.path || "").trim();
+                let sourceKey = "";
+                if (embeddedDataUrl) {
+                    sourceKey = `embedded:${attachmentId}:${embeddedDataUrl.length}`;
+                } else if (cachedDataUrl) {
+                    sourceKey = `cached:${attachmentId}:${cachedDataUrl.length}`;
+                } else if (remoteUrl) {
+                    sourceKey = `remote:${remoteUrl}`;
+                } else if (filePath) {
+                    sourceKey = `path:${filePath}`;
+                } else {
+                    sourceKey = `pending:${attachmentId}`;
+                }
                 return {
-                    id: String(attachment?.id || ""),
+                    id: attachmentId,
                     name: String(attachment?.name || ""),
                     size: Number(attachment?.size || 0),
                     quality: String(attachment?.quality || ""),
@@ -7123,18 +7227,47 @@
                     taskId: String(attachment?.__chatTaskId || ""),
                     createdAt: String(attachment?.__chatCreatedAt || ""),
                     parentMessageId: String(attachment?.__chatMessageId || ""),
-                    url: String(
-                        assetDataUrlFor(attachment) ||
-                            attachment?.dataUrl ||
-                            attachment?.remoteUrl ||
-                            attachment?.path ||
-                            "",
-                    ),
+                    sourceKey,
                 };
             }
 
             function signatureForResultAttachment(attachment) {
-                return JSON.stringify(resultAttachmentSignaturePayload(attachment));
+                const payload = resultAttachmentSignaturePayload(attachment);
+                return [
+                    payload.id,
+                    payload.name,
+                    payload.size,
+                    payload.quality,
+                    payload.mimeType,
+                    payload.placeholderStatus,
+                    payload.placeholderError,
+                    payload.prompt,
+                    payload.taskId,
+                    payload.createdAt,
+                    payload.parentMessageId,
+                    payload.sourceKey,
+                ].join("\u001f");
+            }
+
+            function isVideoLikeAttachment(attachment) {
+                const placeholderStatus = String(
+                    attachment?.__chatPlaceholderStatus || "",
+                )
+                    .trim()
+                    .toLowerCase();
+                if (placeholderStatus) return true;
+                const mimeType = String(attachment?.mimeType || "")
+                    .trim()
+                    .toLowerCase();
+                const fileName = String(attachment?.name || "")
+                    .trim()
+                    .toLowerCase();
+                return (
+                    mimeType.startsWith("video/") ||
+                    fileName.endsWith(".mp4") ||
+                    fileName.endsWith(".mov") ||
+                    fileName.endsWith(".webm")
+                );
             }
 
             function splitFailedPlaceholderText(text) {
@@ -7205,12 +7338,7 @@
                     attachment?.__chatCreatedAt || createdAt,
                 );
                 const hasCreatedTime = createdTime && createdTime !== "—";
-                const mimeType = String(attachment?.mimeType || "").trim().toLowerCase();
-                const fileName = String(attachment?.name || "").trim().toLowerCase();
-                const isVideo =
-                    isPlaceholder ||
-                    mimeType.startsWith("video/") ||
-                    fileName.endsWith(".mp4");
+                const isVideo = isVideoLikeAttachment(attachment);
                 const mediaClass = isPlaceholder
                     ? `chat-result-media has-video ${
                           isFailedPlaceholder
@@ -7250,7 +7378,7 @@
                        </div>`
                     : previewUrl
                     ? isVideo
-                        ? `<video class="hide-native-controls" src="${esc(previewUrl)}" playsinline preload="metadata" muted loop autoplay></video>
+                        ? `<video class="hide-native-controls" src="${esc(previewUrl)}" playsinline preload="metadata" muted loop data-result-video-preview="1"></video>
                            <div class="chat-result-video-overlay">
                                <div class="chat-result-video-play" aria-hidden="true"></div>
                                <div class="chat-result-video-hint">单击放大查看</div>
@@ -7532,6 +7660,7 @@
                         const dataUrl = result?.asset?.dataUrl || "";
                         if (dataUrl) {
                             chatAssetCache.set(id, dataUrl);
+                            chatAssetRenderRevision += 1;
                             renderChatState(currentChatState);
                         }
                         return dataUrl;
@@ -7575,35 +7704,49 @@
                 }
             }
 
-            function signatureForRenderedMessages(messages) {
-                if (!Array.isArray(messages) || !messages.length) return "__empty__";
-                return JSON.stringify(
-                    messages.map((message) => {
-                        const attachments = Array.isArray(message?.attachments)
-                            ? message.attachments
-                            : [];
-                        const logs = Array.isArray(message?.logs)
-                            ? message.logs.map((item) => String(item || ""))
-                            : [];
-                        return {
-                            id: String(message?.id || ""),
-                            role: String(message?.role || ""),
-                            status: String(message?.status || ""),
-                            createdAt: String(message?.createdAt || ""),
-                            updatedAt: String(message?.updatedAt || ""),
-                            text: String(message?.text || ""),
-                            meta: message?.meta || {},
-                            logs,
-                            attachments: attachments.map((attachment) =>
-                                resultAttachmentSignaturePayload(attachment),
-                            ),
-                            };
-                    }),
-                );
-            }
-
             function signatureForRenderedMessage(message) {
-                return signatureForRenderedMessages([message]);
+                if (isMergedResultGalleryMessage(message)) {
+                    const attachments = Array.isArray(message?.attachments)
+                        ? message.attachments
+                        : [];
+                    const firstAttachment = attachments[0] || null;
+                    const lastAttachment =
+                        attachments[attachments.length - 1] || null;
+                    return [
+                        "merged",
+                        attachments.length,
+                        firstAttachment
+                            ? resultCardIdForAttachment(firstAttachment)
+                            : "",
+                        lastAttachment
+                            ? resultCardIdForAttachment(lastAttachment)
+                            : "",
+                        String(message?.updatedAt || message?.createdAt || ""),
+                    ].join("\u001f");
+                }
+                const attachments = Array.isArray(message?.attachments)
+                    ? message.attachments
+                    : [];
+                const meta =
+                    message?.meta && typeof message.meta === "object"
+                        ? message.meta
+                        : {};
+                return [
+                    String(message?.id || ""),
+                    String(message?.role || ""),
+                    String(message?.status || ""),
+                    String(message?.createdAt || ""),
+                    String(message?.updatedAt || ""),
+                    String(message?.text || ""),
+                    String(meta.referenceName || ""),
+                    String(meta.aspectRatio || ""),
+                    String(meta.outDir || ""),
+                    String(meta.taskId || ""),
+                    attachments.length,
+                    attachments
+                        .map((attachment) => signatureForResultAttachment(attachment))
+                        .join("\u001e"),
+                ].join("\u001f");
             }
 
             function messageTimeValue(message) {
@@ -7691,6 +7834,27 @@
                         });
                     }
                 }
+                const limitedAttachments = [];
+                let renderedVideoCount = 0;
+                for (const attachment of attachments) {
+                    const placeholderStatus = String(
+                        attachment?.__chatPlaceholderStatus || "",
+                    )
+                        .trim()
+                        .toLowerCase();
+                    if (placeholderStatus) {
+                        limitedAttachments.push(attachment);
+                        continue;
+                    }
+                    if (!isVideoLikeAttachment(attachment)) {
+                        limitedAttachments.push(attachment);
+                        continue;
+                    }
+                    renderedVideoCount += 1;
+                    if (renderedVideoCount <= MAX_RENDERED_RESULT_VIDEOS) {
+                        limitedAttachments.push(attachment);
+                    }
+                }
                 const first = entries[0]?.message || {};
                 return {
                     id: "__merged_result_gallery__",
@@ -7698,7 +7862,7 @@
                     status: "done",
                     createdAt: first.createdAt || first.updatedAt || "",
                     updatedAt: first.updatedAt || first.createdAt || "",
-                    attachments,
+                    attachments: limitedAttachments,
                     logs: [],
                     meta: {
                         mergedResultGallery: true,
@@ -8016,6 +8180,67 @@
                 }
                 for (const node of existingNodes.values()) {
                     node.remove();
+                }
+            }
+
+            function pauseResultPreviewVideo(video, { reset = false } = {}) {
+                if (!(video instanceof HTMLVideoElement)) return;
+                try {
+                    video.pause();
+                } catch {}
+                if (reset) {
+                    try {
+                        video.currentTime = 0;
+                    } catch {}
+                }
+                const wrapper = video.closest(".chat-result-media.has-video");
+                if (wrapper) wrapper.classList.remove("is-playing");
+            }
+
+            function playResultPreviewVideo(video) {
+                if (!(video instanceof HTMLVideoElement)) return;
+                if (document.visibilityState === "hidden") {
+                    pauseResultPreviewVideo(video, { reset: true });
+                    return;
+                }
+                try {
+                    video.muted = true;
+                    const playback = video.play();
+                    if (playback && typeof playback.catch === "function") {
+                        playback.catch(() => {});
+                    }
+                } catch {}
+            }
+
+            function pauseAllResultPreviewVideos({ reset = false } = {}) {
+                const videos = document.querySelectorAll(
+                    '#chatMessages .chat-result-media.has-video video[data-result-video-preview="1"]',
+                );
+                for (const video of videos) {
+                    pauseResultPreviewVideo(video, { reset });
+                }
+            }
+
+            function syncResultCardPerformanceState() {
+                const cards = Array.from(
+                    document.querySelectorAll("#chatMessages .chat-result-card"),
+                );
+                let animatedPlaceholderCount = 0;
+                for (const card of cards) {
+                    const media = card.querySelector(".chat-result-media");
+                    if (!media) continue;
+                    const isGeneratingPlaceholder = media.classList.contains(
+                        "is-generating-placeholder",
+                    );
+                    if (isGeneratingPlaceholder) {
+                        animatedPlaceholderCount += 1;
+                        media.classList.toggle(
+                            "is-passive-placeholder",
+                            animatedPlaceholderCount > MAX_ANIMATED_PLACEHOLDERS,
+                        );
+                    } else {
+                        media.classList.remove("is-passive-placeholder");
+                    }
                 }
             }
 
@@ -8404,6 +8629,14 @@
                 t.textContent = text || "—";
             }
 
+            function syncRuntimePillFromChat(chat) {
+                const busy = isChatBusy(chat);
+                setPill({
+                    kind: busy ? "warn" : "good",
+                    text: busy ? "聊天执行中" : "聊天就绪",
+                });
+            }
+
             function populatePrompt(prompt) {
                 const value = String(prompt || "").trim();
                 if (!value) return;
@@ -8517,16 +8750,108 @@
 
                 const settings = chat?.settings || {};
                 const inspection = chat?.inspection || {};
-                syncInputValue("chatUserDataDir", settings.userDataDir || "");
-                syncChatOptionControls(settings);
-                syncInputValue(
-                    "chatSpeedPreset",
-                    settings.humanSpeedPreset || "balanced",
-                );
-                if (configDetails && !configDetails.dataset.autoinit) {
-                    configDetails.open =
-                        !settings.userDataDir || inspection.userDataDirExists === false;
-                    configDetails.dataset.autoinit = "1";
+                const chatChromeSignature = JSON.stringify({
+                    settings: {
+                        userDataDir: settings.userDataDir || "",
+                        channel: settings.channel || "",
+                        provider: settings.provider || "",
+                        modelName: settings.modelName || "",
+                        seconds: Number(settings.seconds || 0),
+                        resolution: settings.resolution || "",
+                        aspectRatio: settings.aspectRatio || "",
+                        humanSpeedPreset: settings.humanSpeedPreset || "",
+                    },
+                    inspection: {
+                        autoGenRootExists: Boolean(inspection.autoGenRootExists),
+                        userDataDirExists: Boolean(inspection.userDataDirExists),
+                        outDir: String(inspection.outDir || ""),
+                        suggestions: Array.isArray(inspection.userDataSuggestions)
+                            ? inspection.userDataSuggestions
+                            : [],
+                    },
+                    channels: Array.isArray(currentChatChannels)
+                        ? currentChatChannels
+                        : [],
+                });
+                if (chatChromeSignature !== lastRenderedChatChromeSignature) {
+                    syncInputValue("chatUserDataDir", settings.userDataDir || "");
+                    syncChatOptionControls(settings);
+                    syncInputValue(
+                        "chatSpeedPreset",
+                        settings.humanSpeedPreset || "balanced",
+                    );
+                    if (configDetails && !configDetails.dataset.autoinit) {
+                        configDetails.open =
+                            !settings.userDataDir ||
+                            inspection.userDataDirExists === false;
+                        configDetails.dataset.autoinit = "1";
+                    }
+
+                    if (configSummary) {
+                        configSummary.textContent = [
+                            "生成设置",
+                            (() => {
+                                const item = (currentChatChannels || []).find(
+                                    (entry) =>
+                                        String(entry?.key || "") ===
+                                        String(settings.channel || "flow"),
+                                );
+                                return item?.label || settings.channel || "Flow";
+                            })(),
+                            settings.seconds ? `${settings.seconds}s` : "5s",
+                            chatAspectLabel(
+                                settings.aspectRatio ||
+                                    "IMAGE_ASPECT_RATIO_PORTRAIT",
+                            ),
+                            settings.resolution || "720p",
+                            settings.userDataDir ? "已配置目录" : "待配置目录",
+                        ].join(" · ");
+                    }
+
+                    if (note) {
+                        note.textContent = [
+                            inspection.autoGenRootExists
+                                ? "auto-gen 目录已找到"
+                                : "auto-gen 目录不存在",
+                            inspection.userDataDirExists
+                                ? "登录目录已存在"
+                                : "登录目录不存在，首次使用前需要先登录一次",
+                            inspection.outDir
+                                ? `结果目录：${inspection.outDir}`
+                                : "",
+                            settings.channel ? `当前渠道：${settings.channel}` : "",
+                            settings.aspectRatio
+                                ? `当前画幅：${chatAspectLabel(
+                                      settings.aspectRatio,
+                                  )}`
+                                : "",
+                        ]
+                            .filter(Boolean)
+                            .join(" · ");
+                    }
+
+                    if (hints) {
+                        hints.innerHTML = "";
+                        const suggestions = Array.isArray(
+                            inspection.userDataSuggestions,
+                        )
+                            ? inspection.userDataSuggestions
+                            : [];
+                        for (const item of suggestions) {
+                            const btn = document.createElement("button");
+                            btn.className = "mini";
+                            btn.textContent = item;
+                            btn.title = "点击填入登录目录";
+                            btn.addEventListener("click", () => {
+                                const input =
+                                    document.getElementById("chatUserDataDir");
+                                if (input) input.value = item;
+                            });
+                            hints.appendChild(btn);
+                        }
+                    }
+
+                    lastRenderedChatChromeSignature = chatChromeSignature;
                 }
 
                 const queueCount = Array.isArray(chat?.queue) ? chat.queue.length : 0;
@@ -8556,59 +8881,6 @@
                         settings.aspectRatio || "IMAGE_ASPECT_RATIO_PORTRAIT",
                     );
                 }
-                if (configSummary) {
-                    configSummary.textContent = [
-                        "生成设置",
-                        (() => {
-                            const item = (currentChatChannels || []).find(
-                                (entry) => String(entry?.key || "") === String(settings.channel || "flow"),
-                            );
-                            return item?.label || settings.channel || "Flow";
-                        })(),
-                        settings.seconds ? `${settings.seconds}s` : "5s",
-                        chatAspectLabel(
-                            settings.aspectRatio || "IMAGE_ASPECT_RATIO_PORTRAIT",
-                        ),
-                        settings.resolution || "720p",
-                        settings.userDataDir ? "已配置目录" : "待配置目录",
-                    ].join(" · ");
-                }
-
-                if (note) {
-                    note.textContent = [
-                        inspection.autoGenRootExists
-                            ? "auto-gen 目录已找到"
-                            : "auto-gen 目录不存在",
-                        inspection.userDataDirExists
-                            ? "登录目录已存在"
-                            : "登录目录不存在，首次使用前需要先登录一次",
-                        inspection.outDir ? `结果目录：${inspection.outDir}` : "",
-                        settings.channel ? `当前渠道：${settings.channel}` : "",
-                        settings.aspectRatio
-                            ? `当前画幅：${chatAspectLabel(settings.aspectRatio)}`
-                            : "",
-                    ]
-                        .filter(Boolean)
-                        .join(" · ");
-                }
-
-                if (hints) {
-                    hints.innerHTML = "";
-                    const suggestions = Array.isArray(inspection.userDataSuggestions)
-                        ? inspection.userDataSuggestions
-                        : [];
-                    for (const item of suggestions) {
-                        const btn = document.createElement("button");
-                        btn.className = "mini";
-                        btn.textContent = item;
-                        btn.title = "点击填入登录目录";
-                        btn.addEventListener("click", () => {
-                            const input = document.getElementById("chatUserDataDir");
-                            if (input) input.value = item;
-                        });
-                        hints.appendChild(btn);
-                    }
-                }
 
                 const messages = Array.isArray(chat?.messages) ? chat.messages : [];
                 const visibleMessages = messages.filter(shouldRenderChatMessage);
@@ -8622,25 +8894,39 @@
                 const renderedMessages = arrangeRenderedMessages(
                     visibleMessages.length ? visibleMessages : fallbackMessages,
                 );
-                const renderedMessagesSignature =
-                    signatureForRenderedMessages(renderedMessages);
                 const shouldStick =
                     host.scrollTop + host.clientHeight >= host.scrollHeight - 120;
+                const nextChatRevision = [
+                    String(chat?.revision ?? chat?.updatedAt ?? "preview"),
+                    active ? "1" : "0",
+                    String(queueCount),
+                    renderedMessages.length,
+                ].join("\u001f");
 
                 if (!renderedMessages.length) {
-                    if (lastRenderedMessagesSignature !== "__empty__") {
+                    if (
+                        lastRenderedChatRevision !== "__empty__" ||
+                        lastRenderedChatAssetRevision !== chatAssetRenderRevision
+                    ) {
                         host.innerHTML =
                             '<div class="empty">还没有聊天记录。输入提示词后，后台会自动调用当前渠道执行生成并把结果带回来。</div>';
-                        lastRenderedMessagesSignature = "__empty__";
+                        syncResultCardPerformanceState();
                     }
+                    lastRenderedChatRevision = "__empty__";
+                    lastRenderedChatAssetRevision = chatAssetRenderRevision;
                     return;
                 }
 
-                if (renderedMessagesSignature === lastRenderedMessagesSignature) {
+                if (
+                    nextChatRevision === lastRenderedChatRevision &&
+                    chatAssetRenderRevision === lastRenderedChatAssetRevision
+                ) {
                     return;
                 }
                 patchRenderedMessages(host, renderedMessages);
-                lastRenderedMessagesSignature = renderedMessagesSignature;
+                lastRenderedChatRevision = nextChatRevision;
+                lastRenderedChatAssetRevision = chatAssetRenderRevision;
+                syncResultCardPerformanceState();
 
                 for (const message of renderedMessages) {
                     const attachments = Array.isArray(message?.attachments)
@@ -8654,6 +8940,13 @@
                             }
                             continue;
                         }
+                        if (
+                            attachment?.__chatPlaceholderStatus ||
+                            attachment?.remoteUrl ||
+                            attachment?.path
+                        ) {
+                            continue;
+                        }
                         ensureChatAssetData(attachment.id);
                     }
                 }
@@ -8664,7 +8957,10 @@
             }
 
             async function refreshAll({ silent = false } = {}) {
-                if (refreshing) return;
+                if (refreshing) {
+                    if (!isStaticPreviewMode()) scheduleStatusRefresh();
+                    return;
+                }
                 refreshing = true;
                 if (!silent) setStatus("warn", "刷新中...", { autoHideMs: 0 });
 
@@ -8717,14 +9013,7 @@
                         renderUpdateOverlay(status);
                     } catch {}
                     renderChatState(chat);
-                    const busy = Boolean(
-                        chat?.activeJobId ||
-                            (Array.isArray(chat?.queue) && chat.queue.length),
-                    );
-                    setPill({
-                        kind: busy ? "warn" : "good",
-                        text: busy ? "聊天执行中" : "聊天就绪",
-                    });
+                    syncRuntimePillFromChat(chat);
                     if (!silent) setStatus("", "");
                 } catch (err) {
                     setPill({ kind: "bad", text: "异常" });
@@ -8748,6 +9037,48 @@
                         });
                 } finally {
                     refreshing = false;
+                    if (!isStaticPreviewMode()) {
+                        scheduleStatusRefresh();
+                        scheduleChatRefresh();
+                    }
+                }
+            }
+
+            async function refreshChatOnly({ silent = false } = {}) {
+                if (chatRefreshing) {
+                    if (!isStaticPreviewMode()) scheduleChatRefresh();
+                    return;
+                }
+                if (refreshing) {
+                    if (!isStaticPreviewMode()) {
+                        scheduleChatRefresh(Math.min(1500, nextChatRefreshMs()));
+                    }
+                    return;
+                }
+                if (isStaticPreviewMode() || typeof api.getChatState !== "function") {
+                    return;
+                }
+                if (currentStatusSnapshot?.device?.access?.canUseApp === false) {
+                    if (!isStaticPreviewMode()) scheduleChatRefresh();
+                    return;
+                }
+                chatRefreshing = true;
+                try {
+                    const chat = await api.getChatState();
+                    renderChatState(chat);
+                    syncRuntimePillFromChat(chat);
+                    if (!silent) setStatus("", "");
+                } catch (err) {
+                    if (!silent) {
+                        setStatus("err", err.message || "聊天状态刷新失败", {
+                            autoHideMs: 8000,
+                        });
+                    }
+                } finally {
+                    chatRefreshing = false;
+                    if (!isStaticPreviewMode()) {
+                        scheduleChatRefresh();
+                    }
                 }
             }
 
@@ -8814,11 +9145,8 @@
                         const downloadBtn = attachmentCard?.querySelector("button[data-download-url]");
                         const videoUrl = downloadBtn?.getAttribute("data-download-url") || videoEl.currentSrc || videoEl.src || "";
                         const videoName = downloadBtn?.getAttribute("data-download-name") || videoEl.getAttribute("aria-label") || "视频预览";
-                        videoEl.pause();
+                        pauseResultPreviewVideo(videoEl, { reset: true });
                         openVideoLightbox({ url: videoUrl, name: videoName });
-                        const wrapper = videoEl.closest(".chat-result-media.has-video");
-                        videoEl.muted = true;
-                        if (wrapper) wrapper.classList.remove("is-playing");
                     } catch {}
                     return;
                 }
@@ -8889,6 +9217,38 @@
                 closeVideoLightbox();
             });
 
+            document.addEventListener("mouseover", (e) => {
+                const wrapper = e.target.closest?.(
+                    ".chat-result-media.has-video",
+                );
+                if (!wrapper) return;
+                if (
+                    wrapper.classList.contains("is-generating-placeholder") ||
+                    wrapper.classList.contains("is-failed-placeholder")
+                ) {
+                    return;
+                }
+                const related = e.relatedTarget;
+                if (related instanceof Node && wrapper.contains(related)) return;
+                const videoEl = wrapper.querySelector(
+                    'video[data-result-video-preview="1"]',
+                );
+                if (videoEl) playResultPreviewVideo(videoEl);
+            });
+
+            document.addEventListener("mouseout", (e) => {
+                const wrapper = e.target.closest?.(
+                    ".chat-result-media.has-video",
+                );
+                if (!wrapper) return;
+                const related = e.relatedTarget;
+                if (related instanceof Node && wrapper.contains(related)) return;
+                const videoEl = wrapper.querySelector(
+                    'video[data-result-video-preview="1"]',
+                );
+                if (videoEl) pauseResultPreviewVideo(videoEl, { reset: true });
+            });
+
             document.addEventListener("keydown", (e) => {
                 const promptTextFill = e.target.closest?.("[data-fill-prompt]");
                 if (
@@ -8929,13 +9289,7 @@
                 (e) => {
                     const videoEl = e.target;
                     if (!(videoEl instanceof HTMLVideoElement)) return;
-                    const wrapper = videoEl.closest(".chat-result-media.has-video");
-                    if (wrapper) wrapper.classList.remove("is-playing");
-                    try {
-                        videoEl.currentTime = 0;
-                        videoEl.muted = true;
-                        videoEl.play().catch(() => {});
-                    } catch {}
+                    pauseResultPreviewVideo(videoEl, { reset: true });
                 },
                 true,
             );
@@ -9275,7 +9629,8 @@
                     setStatus("ok", "生成配置已保存", {
                         autoHideMs: 2500,
                     });
-                    await refreshAll({ silent: true });
+                    await refreshChatOnly({ silent: true });
+                    scheduleStatusRefresh();
                 } catch (err) {
                     setStatus("err", err.message || "保存生成配置失败", {
                         autoHideMs: 9000,
@@ -9310,7 +9665,8 @@
                     document.getElementById("chatPrompt").value = "";
                     chatPendingReferences = [];
                     renderChatReferenceState();
-                    await refreshAll({ silent: true });
+                    await refreshChatOnly({ silent: true });
+                    scheduleStatusRefresh();
                 } catch (err) {
                     setStatus("err", err.message || "提交生成任务失败", {
                         autoHideMs: 9000,
@@ -9334,7 +9690,8 @@
                     setStatus("ok", "聊天记录已清空", {
                         autoHideMs: 2500,
                     });
-                    await refreshAll({ silent: true });
+                    await refreshChatOnly({ silent: true });
+                    scheduleStatusRefresh();
                 } catch (err) {
                     setStatus("err", err.message || "清空聊天记录失败", {
                         autoHideMs: 9000,
@@ -9479,6 +9836,10 @@
                             currentSettings.channel ||
                             "",
                     });
+                    lastRenderedChatChromeSignature = "";
+                    if (currentChatState) {
+                        renderChatState(currentChatState);
+                    }
                     return resp;
                 } catch (err) {
                     if (!silent) {
@@ -9501,6 +9862,14 @@
                         media.addListener(handleThemeChange);
                     }
                 } catch {}
+                document.addEventListener("visibilitychange", () => {
+                    if (!isStaticPreviewMode()) {
+                        rescheduleRefreshLoops();
+                    }
+                    if (document.visibilityState === "hidden") {
+                        pauseAllResultPreviewVideos({ reset: true });
+                    }
+                });
                 if (window.flowApi && !isStaticPreviewMode()) {
                     const appRoot = document.querySelector(".app");
                     if (appRoot) appRoot.hidden = true;
@@ -9516,7 +9885,7 @@
                     }
                 } catch {}
                 if (!isStaticPreviewMode()) {
-                    setInterval(() => refreshAll({ silent: true }), 3500);
+                    rescheduleRefreshLoops();
                     setInterval(
                         () => refreshChatChannels({ silent: true }),
                         CHAT_CHANNEL_CONFIG_REFRESH_MS,
