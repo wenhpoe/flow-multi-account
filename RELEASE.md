@@ -19,7 +19,33 @@
 - `permissions: contents: write`（允许上传 Release 资产）
 - 使用内置 `secrets.GITHUB_TOKEN` 发布（无需你手动配置 token）
 
-### 0.2 macOS 代码签名（强烈推荐）
+### 0.2 打包内置的 .env（影响 CDN / OSS / S3 配置）
+
+本项目的 Release 构建会在打包阶段写入一个 `.env` 到应用包内（最终会进入 `app.asar`）。
+
+- 工作流：`.github/workflows/release.yml`
+- Secret 名称：`FMA_BUNDLED_ENV_BASE64`
+- 作用：让“已安装的客户端”在自动更新后，也能拿到最新的对象存储与 CDN 配置（例如 `FLOW_ASSET_CDN` / `OSS_CDN` / `S3_CDN`）。
+
+重要提醒：
+
+- **请把 `.env` 当作“可被用户读取的内容”**：一旦打进安装包/`app.asar`，任何拿到安装包的人都能解包查看。
+- 不要把敏感信息随意分发给不该拥有的人；如果你必须在客户端内置密钥，请确保只在可信范围内分发安装包。
+
+推荐做法（本机生成 base64 并写入 GitHub Secret）：
+
+```bash
+cd /Users/wen/work/google-flow/flow-multi-account
+chmod +x scripts/update-gh-secret-bundled-env.sh
+
+# 先确认你本机的 .env 是“你想打进安装包”的版本（尤其是 CDN 域名）
+./scripts/update-gh-secret-bundled-env.sh --dry-run .env
+
+# 写入 GitHub Actions secret: FMA_BUNDLED_ENV_BASE64
+./scripts/update-gh-secret-bundled-env.sh .env
+```
+
+### 0.3 macOS 代码签名（强烈推荐）
 
 macOS 的自动更新（Squirrel.Mac / ShipIt）会校验 **新版本必须满足旧版本的 code requirement**。
 
@@ -43,7 +69,7 @@ base64 -i signing-cert.p12 | pbcopy
 然后粘贴到 GitHub：
 `Settings` → `Secrets and variables` → `Actions` → `New repository secret`。
 
-### 0.2 本地工具（可选）
+### 0.4 本地工具（可选）
 
 如果你想本地手动发包（不用 Actions），需要：
 
