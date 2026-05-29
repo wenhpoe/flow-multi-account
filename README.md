@@ -57,6 +57,25 @@ FMA_NO_LOCAL_PROFILES=0 npm start
 
 注意：即使不保存 `profiles/*.json`，Playwright/Chromium 运行时仍会创建临时的浏览器配置目录（用于运行时会话），通常在上下文关闭后自动清理。
 
+## 参考图上传（OSS / S3 / CDN）
+
+聊天生成里“参考图”（reference image）会先写入本地临时文件，然后在登记资源（registerAsset）前按配置上传到对象存储（OSS 或 S3）。
+
+当 `FLOW_TASK_ASSET_TRANSPORT=oss`（默认）或 `FLOW_TASK_ASSET_TRANSPORT=s3` 时：
+
+- 客户端会把参考图上传到对象存储，并将对外可访问的 URL 写入 `asset.metadata.publicUrl`
+- 下游任务（例如 Seedance）会把这些 URL 作为 `extra_body.images` 传给服务端/模型
+- 如你希望把对外 URL 改为 CDN 域名，只需要配置 `FLOW_ASSET_CDN`（推荐）或 `OSS_CDN` / `S3_CDN`
+
+推荐做法：在启动 `flow-multi-account` 前配置环境变量（或复制 `flow-multi-account/.env.example` 为本机 `.env` 并自行填写）。
+
+关键配置项：
+
+- `FLOW_TASK_ASSET_TRANSPORT=oss` 或 `FLOW_TASK_ASSET_TRANSPORT=s3`
+- OSS 模式：`OSS_ENDPOINT` / `OSS_BUCKET` / `OSS_ACCESS_KEY_ID` / `OSS_ACCESS_KEY_SECRET`
+- S3 模式：`S3_BUCKET` + `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`（以及可选 `AWS_REGION`）
+- CDN：`FLOW_ASSET_CDN=https://airesource.seekkai.com`（必须包含 `https://`；也可用 `OSS_CDN` / `S3_CDN`）
+
 ## 浏览器要求
 
 为避免打包体积过大，本项目默认使用系统已安装的 Google Chrome（`channel=chrome`）。请先安装 Chrome。

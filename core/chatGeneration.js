@@ -862,7 +862,7 @@ async function registerReferenceAsset(job) {
     jobId: job.id,
     referenceName: job.referenceImage.name,
   };
-  if (ossBridge.isOssTransportEnabled()) {
+  if (ossBridge.isOssTransportEnabled() || ossBridge.isS3TransportEnabled()) {
     objectKey = ossBridge.buildObjectKey({
       storageRootKey: written.location.storageRootKey,
       relativePath: written.location.relativePath,
@@ -874,8 +874,11 @@ async function registerReferenceAsset(job) {
     });
     remoteUrl = String(upload?.publicUrl || '').trim() || null;
     relativePath = String(upload?.objectKey || objectKey).trim() || objectKey;
-    metadata.transport = 'oss';
-    metadata.ossObjectKey = relativePath;
+    const isS3 = ossBridge.isS3TransportEnabled();
+    metadata.transport = isS3 ? 's3' : 'oss';
+    metadata.objectKey = relativePath;
+    if (isS3) metadata.s3ObjectKey = relativePath;
+    else metadata.ossObjectKey = relativePath;
     metadata.publicUrl = remoteUrl;
   }
   const response = await taskClient.registerAsset({

@@ -1,6 +1,6 @@
 {
   "name": "flow-multi-account",
-  "version": "1.5.8",
+  "version": "1.5.9",
   "description": "Flow 多账号管理器（桌面应用 + 独立会话隔离）",
   "author": "Flow Team",
   "private": true,
@@ -15,6 +15,7 @@
     "dist:compat": "npm run gen:icon && node scripts/dist.js -c.win.signAndEditExecutable=false"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.888.0",
     "ali-oss": "^6.23.0",
     "electron-updater": "^6.6.2",
     "express": "^4.19.2",

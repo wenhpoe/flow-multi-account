@@ -3,6 +3,7 @@ const path = require('path');
 const { URL } = require('url');
 
 const OSS = require('ali-oss');
+const { S3Client, PutObjectCommand, GetBucketLocationCommand } = require('@aws-sdk/client-s3');
 
 const taskStorage = require('./sharedTaskStorage');
 
@@ -10,11 +11,17 @@ const DEFAULT_OSS_PREFIX = 'flow-task-system';
 
 function assetTransportMode() {
   const value = String(process.env.FLOW_TASK_ASSET_TRANSPORT || 'oss').trim().toLowerCase();
-  return value === 'local' ? 'local' : 'oss';
+  if (value === 'local') return 'local';
+  if (value === 's3') return 's3';
+  return 'oss';
 }
 
 function isOssTransportEnabled() {
   return assetTransportMode() === 'oss';
+}
+
+function isS3TransportEnabled() {
+  return assetTransportMode() === 's3';
 }
 
 function normalizePrefix(input) {
@@ -65,6 +72,60 @@ function createClient() {
   });
 }
 
+function requiredAwsEnv(primaryName, fallbackName) {
+  const value = String(process.env[primaryName] || '').trim() || String(process.env[fallbackName] || '').trim();
+  if (!value) throw new Error(`S3 配置缺失：${primaryName}`);
+  return value;
+}
+
+function normalizeAwsRegion(value) {
+  const region = String(value || '').trim();
+  return region || 'us-east-1';
+}
+
+function normalizeS3Endpoint(value) {
+  const endpoint = String(value || '').trim().replace(/\/+$/, '');
+  if (!endpoint) return null;
+  if (!/^https?:\/\//i.test(endpoint)) return `https://${endpoint}`;
+  return endpoint;
+}
+
+async function resolveS3BucketRegion({ bucket, accessKeyId, secretAccessKey }) {
+  const explicit = String(process.env.S3_REGION || process.env.AWS_REGION || '').trim();
+  if (explicit) return explicit;
+  const client = new S3Client({
+    region: 'us-east-1',
+    credentials: { accessKeyId, secretAccessKey },
+    endpoint: normalizeS3Endpoint(process.env.S3_ENDPOINT),
+    forcePathStyle: String(process.env.S3_FORCE_PATH_STYLE || '').trim() === '1',
+  });
+  const response = await client.send(new GetBucketLocationCommand({ Bucket: bucket }));
+  const constraint = response && response.LocationConstraint ? String(response.LocationConstraint).trim() : '';
+  // AWS uses empty/null LocationConstraint for us-east-1.
+  return constraint || 'us-east-1';
+}
+
+async function createS3Client() {
+  const bucket = String(process.env.S3_BUCKET || process.env.OSS_BUCKET || '').trim();
+  if (!bucket) throw new Error('S3 配置缺失：S3_BUCKET');
+  const accessKeyId = requiredAwsEnv('AWS_ACCESS_KEY_ID', 'OSS_ACCESS_KEY_ID');
+  const secretAccessKey = requiredAwsEnv('AWS_SECRET_ACCESS_KEY', 'OSS_ACCESS_KEY_SECRET');
+  const region = normalizeAwsRegion(
+    String(process.env.S3_REGION || process.env.AWS_REGION || '').trim()
+      || (await resolveS3BucketRegion({ bucket, accessKeyId, secretAccessKey }))
+  );
+  return {
+    bucket,
+    region,
+    client: new S3Client({
+      region,
+      credentials: { accessKeyId, secretAccessKey },
+      endpoint: normalizeS3Endpoint(process.env.S3_ENDPOINT),
+      forcePathStyle: String(process.env.S3_FORCE_PATH_STYLE || '').trim() === '1',
+    }),
+  };
+}
+
 function encodeObjectKey(objectKey) {
   return String(objectKey || '')
     .split('/')
@@ -73,7 +134,9 @@ function encodeObjectKey(objectKey) {
 }
 
 function buildPublicUrl(objectKey) {
-  const cdn = String(process.env.OSS_CDN || '').trim().replace(/\/+$/, '');
+  const cdn = String(process.env.FLOW_ASSET_CDN || process.env.S3_CDN || process.env.OSS_CDN || '')
+    .trim()
+    .replace(/\/+$/, '');
   if (cdn) return `${cdn}/${encodeObjectKey(objectKey)}`;
   const bucket = requiredEnv('OSS_BUCKET');
   const endpoint = normalizeEndpoint(requiredEnv('OSS_ENDPOINT'));
@@ -87,6 +150,40 @@ async function uploadFile({ localPath, objectKey, contentType }) {
   if (!finalObjectKey) throw new Error('objectKey required');
   const headers = {};
   if (contentType) headers['Content-Type'] = String(contentType).trim();
+  const transport = assetTransportMode();
+  if (transport === 'local') {
+    return {
+      ok: false,
+      objectKey: finalObjectKey,
+      publicUrl: null,
+      sizeBytes: fs.statSync(targetPath).size,
+      contentType: String(contentType || '').trim() || null,
+    };
+  }
+  if (transport === 's3') {
+    try {
+      const { bucket, client } = await createS3Client();
+      const body = fs.createReadStream(targetPath);
+      await client.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: finalObjectKey,
+          Body: body,
+          ContentType: headers['Content-Type'] || undefined,
+        })
+      );
+      return {
+        ok: true,
+        objectKey: finalObjectKey,
+        publicUrl: buildPublicUrl(finalObjectKey),
+        sizeBytes: fs.statSync(targetPath).size,
+        contentType: String(contentType || '').trim() || null,
+      };
+    } catch (err) {
+      const message = err && err.message ? err.message : String(err);
+      throw new Error(`S3 上传失败：${message}`);
+    }
+  }
   try {
     const client = createClient();
     await client.put(finalObjectKey, targetPath, Object.keys(headers).length ? { headers } : undefined);
@@ -121,5 +218,6 @@ module.exports = {
   buildObjectKey,
   fetchRemoteDataUrl,
   isOssTransportEnabled,
+  isS3TransportEnabled,
   uploadFile,
 };
