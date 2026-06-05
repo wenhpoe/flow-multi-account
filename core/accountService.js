@@ -12,6 +12,10 @@ const deviceValidationCache = {
   promise: null,
 };
 
+async function sleep(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function authHeaders() {
   const s = deviceState.readDeviceState();
   if (!s.token) throw new Error('设备未激活');
@@ -100,6 +104,32 @@ async function fetchJson(url, { method = 'GET', headers = {}, body, timeoutMs = 
   }
 }
 
+async function fetchJsonWithRetry(
+  url,
+  {
+    retries = 0,
+    retryDelayMs = 300,
+    shouldRetry,
+    ...options
+  } = {},
+) {
+  let lastError = null;
+  const retryJudge =
+    typeof shouldRetry === 'function'
+      ? shouldRetry
+      : (err) => String(err?.message || '').includes('请求超时');
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await fetchJson(url, options);
+    } catch (err) {
+      lastError = err;
+      if (attempt >= retries || !retryJudge(err, attempt)) throw err;
+      await sleep(retryDelayMs);
+    }
+  }
+  throw lastError || new Error('请求失败');
+}
+
 async function activateDevice({ machineId, activationCode, serverUrl }) {
   const base = deviceState.normalizeUrl(serverUrl || controlPlane.getBaseUrl());
   let parsed;
@@ -174,9 +204,11 @@ async function validateDeviceAccess({ force = false, maxAgeMs = 15000 } = {}) {
   let pending = null;
   pending = (async () => {
     try {
-      const data = await fetchJson(`${serverUrl}/v1/client/device`, {
+      const data = await fetchJsonWithRetry(`${serverUrl}/v1/client/device`, {
         headers: { ...authHeaders() },
         timeoutMs: 6000,
+        retries: 1,
+        retryDelayMs: 400,
       });
       const allowedProfiles = Array.isArray(data?.allowedProfiles)
         ? data.allowedProfiles.map((item) => String(item).trim()).filter(Boolean)

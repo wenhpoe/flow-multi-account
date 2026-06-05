@@ -6697,6 +6697,9 @@
                                         <option value="flow">Flow</option>
                                         <option value="seedance">Seedance</option>
                                     </select>
+                                    <select id="chatProvider" class="input" style="min-width:120px; max-width:150px;">
+                                        <option value="1">服务商 1</option>
+                                    </select>
                                     <select id="chatModel" class="input" style="min-width:220px; max-width:280px;">
                                         <option value="dreamina-seedance-2-0-fast-260128" selected>dreamina-seedance-2-0-fast-260128</option>
                                         <option value="dreamina-seedance-2-0-260128">dreamina-seedance-2-0-260128</option>
@@ -6815,6 +6818,7 @@
 	            </section>
         </div>
 
+        <script src="/channelCatalogState.js"></script>
         <script>
             const api = (() => {
                 if (window.flowApi) return window.flowApi;
@@ -6880,6 +6884,8 @@
             let chatRefreshing = false;
             let currentChatState = null;
             let currentChatChannels = [];
+            let chatChannelCatalogLoaded = false;
+            let chatChannelCatalogError = "";
             const CHAT_CHANNEL_CONFIG_REFRESH_MS = 5 * 60 * 1000;
             const CHAT_ACTIVE_REFRESH_MS = 1500;
             const CHAT_IDLE_REFRESH_MS = 6000;
@@ -6933,17 +6939,159 @@
                     : null;
             }
 
+            function getChannelCatalogStateApi() {
+                return window.FlowChannelCatalogState || {
+                    listEnabledProviders(channel) {
+                        const providers = Array.isArray(channel?.providers)
+                            ? channel.providers
+                            : [];
+                        return providers.filter(
+                            (item) => item && item.enabled !== false,
+                        );
+                    },
+                    resolveProvider(channel, preferred) {
+                        const preferredKey = String(preferred || "").trim();
+                        const enabled = this.listEnabledProviders(channel);
+                        const keys = enabled
+                            .map((item) => String(item?.key || "").trim())
+                            .filter(Boolean);
+                        if (preferredKey && keys.includes(preferredKey)) {
+                            return preferredKey;
+                        }
+                        const selected = String(
+                            channel?.selected_provider || "",
+                        ).trim();
+                        if (selected && keys.includes(selected)) return selected;
+                        return keys[0] || preferredKey || "1";
+                    },
+                    resolveProviderConfig(channel, preferred) {
+                        const providerKey = this.resolveProvider(
+                            channel,
+                            preferred,
+                        );
+                        return this.listEnabledProviders(channel).find(
+                            (item) =>
+                                String(item?.key || "").trim() === providerKey,
+                        ) || null;
+                    },
+                    resolveProviderConstraints(provider) {
+                        const direct =
+                            provider?.constraints &&
+                            typeof provider.constraints === "object"
+                                ? provider.constraints
+                                : {};
+                        if (Object.keys(direct).length) return direct;
+                        return provider?.extra?.constraints &&
+                            typeof provider.extra.constraints === "object"
+                            ? provider.extra.constraints
+                            : {};
+                    },
+                    resolveConstraints(channel, preferred) {
+                        const channelConstraints =
+                            channel?.constraints &&
+                            typeof channel.constraints === "object"
+                                ? channel.constraints
+                                : {};
+                        const providerConstraints =
+                            this.resolveProviderConstraints(
+                                this.resolveProviderConfig(channel, preferred),
+                            );
+                        return {
+                            ...channelConstraints,
+                            ...providerConstraints,
+                        };
+                    },
+                    requiresReferenceImage(channel, preferred) {
+                        return (
+                            this.resolveConstraints(channel, preferred)
+                                .requires_image === true
+                        );
+                    },
+                };
+            }
+
             function resolveAvailableChatProvider(channelKey, preferred) {
-                const preferredKey = String(preferred || "").trim();
                 const channel = getChatChannelConfig(channelKey);
-                const providers = Array.isArray(channel?.providers)
-                    ? channel.providers.filter((item) => item && item.enabled !== false)
-                    : [];
-                const providerKeys = providers
-                    .map((item) => String(item?.key || "").trim())
-                    .filter(Boolean);
-                if (preferredKey && providerKeys.includes(preferredKey)) return preferredKey;
-                return providerKeys[0] || preferredKey || "1";
+                return getChannelCatalogStateApi().resolveProvider(
+                    channel,
+                    preferred,
+                );
+            }
+
+            function getActiveChatChannelProviderState() {
+                const currentSettings = currentChatState?.settings || {};
+                const channel = resolveAvailableChatChannel(
+                    document.getElementById("chatChannel")?.value ||
+                        currentSettings.channel ||
+                        "",
+                );
+                const provider = resolveAvailableChatProvider(
+                    channel,
+                    document.getElementById("chatProvider")?.value ||
+                        currentSettings.provider ||
+                        "",
+                );
+                return {
+                    channel,
+                    provider,
+                    channelConfig: getChatChannelConfig(channel),
+                };
+            }
+
+            function currentChatRequiresReferenceImage() {
+                const { channelConfig, provider } =
+                    getActiveChatChannelProviderState();
+                return getChannelCatalogStateApi().requiresReferenceImage(
+                    channelConfig,
+                    provider,
+                );
+            }
+
+            function channelCatalogReady() {
+                return chatChannelCatalogLoaded && Array.isArray(currentChatChannels) && currentChatChannels.length > 0;
+            }
+
+            function syncChatCatalogAvailability() {
+                const disabled = !channelCatalogReady();
+                [
+                    "chatChannel",
+                    "chatProvider",
+                    "chatModel",
+                    "chatVideoSeconds",
+                    "chatAspectRatio",
+                    "chatResolution",
+                    "chatPrompt",
+                    "btnChatSend",
+                ].forEach((id) => {
+                    const node = document.getElementById(id);
+                    if (!node) return;
+                    node.disabled = disabled;
+                });
+                const button = document.getElementById("btnChatSend");
+                if (button) {
+                    const hint = disabled
+                        ? (chatChannelCatalogError || "渠道配置加载中，暂时无法提交")
+                        : "开始生成";
+                    button.title = hint;
+                    button.setAttribute("aria-label", hint);
+                }
+            }
+
+            function syncChatProviderSelect(channelKey, preferred) {
+                const channel = getChatChannelConfig(channelKey);
+                const providers = getChannelCatalogStateApi()
+                    .listEnabledProviders(channel)
+                    .map((item) => ({
+                        value: String(item?.key || "").trim(),
+                        label: String(item?.label || item?.key || "").trim(),
+                    }))
+                    .filter((item) => item.value);
+                const options = providers.length ? providers : [];
+                return setSelectOptions(
+                    "chatProvider",
+                    options,
+                    resolveAvailableChatProvider(channelKey, preferred),
+                );
             }
 
             function normalizeStringOptions(value, fallback = []) {
@@ -7038,7 +7186,13 @@
                 const deduped = normalized.filter(
                     (item, index, arr) => arr.findIndex((it) => it.value === item.value) === index,
                 );
-                if (!deduped.length) return select.value || "";
+                if (!deduped.length) {
+                    select.innerHTML = "";
+                    select.dataset.optionSignature = "[]";
+                    select.dataset.configInitialized = "0";
+                    select.value = "";
+                    return "";
+                }
                 const values = deduped.map((item) => item.value);
                 const desired = String(preferredValue || "").trim();
                 const resolved = values.includes(desired) ? desired : values[0];
@@ -7085,6 +7239,15 @@
 
             function syncChatOptionControls(settings = {}) {
                 const channelKey = syncChatChannelSelect(settings.channel || document.getElementById("chatChannel")?.value || "");
+                const providerSelect = document.getElementById("chatProvider");
+                syncChatProviderSelect(
+                    channelKey,
+                    providerSelect?.dataset.userSelected === "1"
+                        ? providerSelect.value || settings.provider || ""
+                        : settings.providerTouched
+                          ? settings.provider || ""
+                          : "",
+                );
                 const options = getChannelClientOptions(channelKey);
                 const defaults = getChannelDefaultParams(channelKey);
                 const modelFallback = options.models[0] || DEFAULT_SEEDANCE_CLIENT_OPTIONS.models[0];
@@ -7120,6 +7283,7 @@
                     preferredConfiguredValue("chatResolution", settings.resolution, defaults.resolution, resolutionFallback),
                 );
                 syncSeedanceControlVisibility(channelKey);
+                renderChatReferenceState();
             }
 
             function syncSeedanceControlVisibility(channelKey) {
@@ -7139,6 +7303,7 @@
                     node.hidden = !visible;
                     node.style.display = visible ? "" : "none";
                 });
+                syncChatCatalogAvailability();
             }
             let currentStatusSnapshot = null;
             let chatPendingReferences = [];
@@ -7392,8 +7557,14 @@
                     channel,
                     provider: resolveAvailableChatProvider(
                         channel,
-                        currentSettings.provider || "1",
+                        document.getElementById("chatProvider")?.value ||
+                            currentSettings.provider ||
+                            "1",
                     ),
+                    providerTouched:
+                        document.getElementById("chatProvider")?.dataset
+                            .userSelected === "1" ||
+                        Boolean(currentSettings.providerTouched),
                     modelName:
                         readVisibleInputValue("chatModel") ||
                         defaults.modelName ||
@@ -7450,6 +7621,7 @@
                 const firstReference = references[0] || null;
                 const hasReference = references.length > 0;
                 const isReferenceFull = references.length >= MAX_SEEDANCE_REFERENCE_IMAGES;
+                const requiresReference = currentChatRequiresReferenceImage();
                 if (label) {
                     label.innerHTML =
                         `<span class="label-ntjuL3 seedance-reference-label">参考${references.length > 1 ? ` ${references.length}` : ""}</span>`;
@@ -7459,14 +7631,18 @@
                         ? `已选 ${references.length} 张，已达上限`
                         : hasReference
                         ? `已选 ${references.length} 张，最多 ${MAX_SEEDANCE_REFERENCE_IMAGES} 张`
-                        : "点击或拖入参考图";
+                        : requiresReference
+                        ? "点击或拖入参考图"
+                        : "可选：点击或拖入参考图";
                 }
                 if (cta) {
                     cta.textContent = isReferenceFull
                         ? "已达上限"
                         : hasReference
                         ? "继续添加"
-                        : "选择参考";
+                        : requiresReference
+                        ? "选择参考"
+                        : "添加参考";
                 }
                 if (preview) {
                     const dataUrl = firstReference?.dataUrl || "";
@@ -7495,7 +7671,9 @@
                 if (heroReference) {
                     heroReference.textContent = hasReference
                         ? "Ready"
-                        : "Empty";
+                        : requiresReference
+                        ? "Required"
+                        : "Optional";
                 }
             }
 
@@ -7918,13 +8096,14 @@
                 </div>`;
             }
 
-            function renderResultAttachmentCard(
-                attachment,
-                promptText,
-                taskId,
-                createdAt,
-                { idPrefix = "" } = {},
-            ) {
+	            function renderResultAttachmentCard(
+	                attachment,
+	                promptText,
+	                taskId,
+	                batchId,
+	                createdAt,
+	                { idPrefix = "" } = {},
+	            ) {
                 const dataUrl = assetDataUrlFor(attachment);
                 const externalUrl = toExternalAssetUrl(attachment);
                 const previewUrl = dataUrl || externalUrl;
@@ -7940,12 +8119,15 @@
                 const isFailedPlaceholder = placeholderStatus === "failed";
                 const effectivePromptText =
                     String(attachment?.__chatPrompt || "").trim() || promptText;
-                const fullTaskId = String(
-                    attachment?.__chatTaskId || taskId || "",
-                ).trim();
-                const createdTime = ts(
-                    attachment?.__chatCreatedAt || createdAt,
-                );
+	                const fullTaskId = String(
+	                    attachment?.__chatTaskId || taskId || "",
+	                ).trim();
+	                const fullBatchId = String(
+	                    attachment?.__chatBatchId || batchId || "",
+	                ).trim();
+	                const createdTime = ts(
+	                    attachment?.__chatCreatedAt || createdAt,
+	                );
                 const hasCreatedTime = createdTime && createdTime !== "—";
                 const isVideo = isVideoLikeAttachment(attachment);
                 const mediaClass = isPlaceholder
@@ -8032,18 +8214,39 @@
                             </button>
                         </div>
                         <div class="chat-result-prompt" data-result-prompt="${esc(attachmentId)}" hidden>
-                            ${
-                                fullTaskId
-                                    ? `<div class="chat-result-prompt-task">
-                                        <div class="chat-result-prompt-task-label">任务 ID</div>
-                                        <div class="chat-result-prompt-task-value">${esc(fullTaskId)}</div>
-                                      </div>`
-                                    : ""
-                            }
-                            ${
-                                hasCreatedTime
-                                    ? `<div class="chat-result-prompt-task">
-                                        <div class="chat-result-prompt-task-label">时间</div>
+	                            ${
+	                                fullTaskId
+	                                    ? `<div class="chat-result-prompt-task">
+	                                        <div class="chat-result-prompt-task-label">任务 ID</div>
+	                                        <div class="chat-result-prompt-task-value">${esc(fullTaskId)}</div>
+	                                      </div>`
+	                                    : ""
+	                            }
+	                            ${
+	                                fullBatchId
+	                                    ? `<div class="chat-result-prompt-task">
+	                                        <div class="chat-result-prompt-task-label">Batch ID</div>
+	                                        <div class="chat-result-prompt-task-value">${esc(fullBatchId)}</div>
+	                                      </div>`
+	                                    : ""
+	                            }
+	                            ${
+	                                fullTaskId
+	                                    ? `<button
+	                                          class="chat-result-menu-item"
+	                                          type="button"
+	                                          data-refresh-chat-task="1"
+	                                          data-refresh-task-id="${esc(fullTaskId)}"
+	                                          data-refresh-batch-id="${esc(fullBatchId)}"
+	                                      >
+	                                          刷新任务结果
+	                                      </button>`
+	                                    : ""
+	                            }
+	                            ${
+	                                hasCreatedTime
+	                                    ? `<div class="chat-result-prompt-task">
+	                                        <div class="chat-result-prompt-task-label">时间</div>
                                         <div class="chat-result-prompt-task-value">${esc(createdTime)}</div>
                                       </div>`
                                     : ""
@@ -8577,15 +8780,16 @@
                     .map((group) => {
                         const cards = group.attachments
                             .map((attachment) => {
-                                const html = renderResultAttachmentCard(
-                                    attachment,
-                                    String(attachment?.__chatPrompt || ""),
-                                    String(attachment?.__chatTaskId || ""),
-                                    attachment?.__chatCreatedAt ||
-                                        attachment?.createdAt ||
-                                        "",
-                                    {
-                                        idPrefix: `assetlib_${cardIndex++}_`,
+	                                const html = renderResultAttachmentCard(
+	                                    attachment,
+	                                    String(attachment?.__chatPrompt || ""),
+	                                    String(attachment?.__chatTaskId || ""),
+	                                    String(attachment?.__chatBatchId || ""),
+	                                    attachment?.__chatCreatedAt ||
+	                                        attachment?.createdAt ||
+	                                        "",
+	                                    {
+	                                        idPrefix: `assetlib_${cardIndex++}_`,
                                     },
                                 );
                                 return html;
@@ -8654,15 +8858,16 @@
                 const attachmentsHtml = attachments.length
                     ? hasResultGallery
                         ? `<div class="chat-result-grid">${attachments
-                              .map((attachment) =>
-                                  renderResultAttachmentCard(
-                                      attachment,
-                                      promptReuse,
-                                      message?.meta?.taskId,
-                                      message?.createdAt || message?.updatedAt,
-                                  ),
-                              )
-                              .join("")}</div>`
+	                              .map((attachment) =>
+	                                  renderResultAttachmentCard(
+	                                      attachment,
+	                                      promptReuse,
+	                                      message?.meta?.taskId,
+	                                      message?.meta?.batchId,
+	                                      message?.createdAt || message?.updatedAt,
+	                                  ),
+	                              )
+	                              .join("")}</div>`
                         : `<div class="chat-attachments">${attachments
                               .map((attachment) => {
                                   const dataUrl = assetDataUrlFor(attachment);
@@ -8772,16 +8977,17 @@
               `;
             }
 
-            function renderMergedResultAttachmentCard(attachment, message) {
-                return renderResultAttachmentCard(
-                    attachment,
-                    String(attachment?.__chatPrompt || ""),
-                    String(attachment?.__chatTaskId || message?.meta?.taskId || ""),
-                    attachment?.__chatCreatedAt ||
-                        message?.createdAt ||
-                        message?.updatedAt,
-                );
-            }
+	            function renderMergedResultAttachmentCard(attachment, message) {
+	                return renderResultAttachmentCard(
+	                    attachment,
+	                    String(attachment?.__chatPrompt || ""),
+	                    String(attachment?.__chatTaskId || message?.meta?.taskId || ""),
+	                    String(attachment?.__chatBatchId || message?.meta?.batchId || ""),
+	                    attachment?.__chatCreatedAt ||
+	                        message?.createdAt ||
+	                        message?.updatedAt,
+	                );
+	            }
 
             function patchMergedResultGalleryNode(node, message) {
                 const grid = node?.querySelector?.(".chat-result-grid");
@@ -9611,6 +9817,7 @@
                         userDataDir: settings.userDataDir || "",
                         channel: settings.channel || "",
                         provider: settings.provider || "",
+                        providerTouched: Boolean(settings.providerTouched),
                         modelName: settings.modelName || "",
                         seconds: Number(settings.seconds || 0),
                         resolution: settings.resolution || "",
@@ -9947,7 +10154,7 @@
                 }
             }
 
-            document.addEventListener("click", async (e) => {
+	            document.addEventListener("click", async (e) => {
                 const promptToggle = e.target.closest(
                     "button[data-result-prompt-toggle]",
                 );
@@ -9968,9 +10175,9 @@
                     return;
                 }
 
-                const menuToggle = e.target.closest(
-                    "button[data-result-menu-toggle]",
-                );
+	                const menuToggle = e.target.closest(
+	                    "button[data-result-menu-toggle]",
+	                );
                 if (menuToggle) {
                     const id =
                         menuToggle.getAttribute("data-result-menu-toggle") || "";
@@ -9984,11 +10191,40 @@
                         panel.hidden = false;
                         menuToggle.setAttribute("aria-expanded", "true");
                     }
-                    return;
-                }
+	                    return;
+	                }
 
-                const downloadBtn = e.target.closest("button[data-download-url]");
-                if (downloadBtn) {
+	                const refreshTaskBtn = e.target.closest("button[data-refresh-chat-task]");
+	                if (refreshTaskBtn) {
+	                    const taskId = refreshTaskBtn.getAttribute("data-refresh-task-id") || "";
+	                    const batchId = refreshTaskBtn.getAttribute("data-refresh-batch-id") || "";
+	                    if (typeof api.refreshChatTask !== "function") {
+	                        setStatus("warn", "当前运行模式不支持任务刷新。", {
+	                            autoHideMs: 4000,
+	                        });
+	                        return;
+	                    }
+	                    const originalText = refreshTaskBtn.textContent;
+	                    try {
+	                        refreshTaskBtn.disabled = true;
+	                        refreshTaskBtn.textContent = "刷新中…";
+	                        await api.refreshChatTask({ taskId, batchId });
+	                        await refreshChatOnly({ silent: true });
+	                        closeResultOverlays();
+	                        setStatus("ok", "已刷新任务状态", { autoHideMs: 2200 });
+	                    } catch (err) {
+	                        setStatus("err", err?.message || "刷新失败", {
+	                            autoHideMs: 8000,
+	                        });
+	                    } finally {
+	                        refreshTaskBtn.disabled = false;
+	                        refreshTaskBtn.textContent = originalText;
+	                    }
+	                    return;
+	                }
+
+	                const downloadBtn = e.target.closest("button[data-download-url]");
+	                if (downloadBtn) {
                     const downloadUrl =
                         downloadBtn.getAttribute("data-download-url") || "";
                     const downloadName =
@@ -10555,6 +10791,12 @@
                     });
                     return;
                 }
+                if (!channelCatalogReady()) {
+                    setStatus("err", chatChannelCatalogError || "渠道配置未加载完成，暂时无法提交任务。", {
+                        autoHideMs: 9000,
+                    });
+                    return;
+                }
                 const prompt =
                     document.getElementById("chatPrompt")?.value?.trim() || "";
                 if (!prompt) {
@@ -10573,9 +10815,23 @@
                         chatPendingReferences = referencesForSubmit;
                         renderChatReferenceState();
                     }
+                    const settings = collectChatSettings();
+                    const channelConfig = getChatChannelConfig(settings.channel);
+                    if (
+                        referencesForSubmit.length === 0 &&
+                        getChannelCatalogStateApi().requiresReferenceImage(
+                            channelConfig,
+                            settings.provider,
+                        )
+                    ) {
+                        setStatus("warn", "当前渠道/服务商需要至少 1 张参考图", {
+                            autoHideMs: 4000,
+                        });
+                        return;
+                    }
                     const result = await api.sendChatMessage({
                         prompt,
-                        settings: collectChatSettings(),
+                        settings,
                         referenceImage: referencesForSubmit[0] || null,
                         referenceImages: referencesForSubmit,
                     });
@@ -10769,6 +11025,11 @@
                 });
                 saveChatSettings();
             });
+            document.getElementById("chatProvider")?.addEventListener("change", (e) => {
+                if (e.target?.dataset) e.target.dataset.userSelected = "1";
+                renderChatReferenceState();
+                saveChatSettings();
+            });
             ["chatModel", "chatVideoSeconds", "chatAspectRatio", "chatResolution"].forEach((id) => {
                 document.getElementById(id)?.addEventListener("change", () => {
                     saveChatSettings();
@@ -10792,6 +11053,10 @@
                     currentChatChannels = Array.isArray(resp?.channels)
                         ? resp.channels
                         : [];
+                    chatChannelCatalogLoaded = currentChatChannels.length > 0;
+                    chatChannelCatalogError = chatChannelCatalogLoaded
+                        ? ""
+                        : "管理服务未返回可用渠道配置";
                     const currentSettings = currentChatState?.settings || {};
                     syncChatOptionControls({
                         ...currentSettings,
@@ -10804,10 +11069,22 @@
                     if (currentChatState) {
                         renderChatState(currentChatState);
                     }
+                    if (!chatChannelCatalogLoaded && !silent) {
+                        setStatus("err", chatChannelCatalogError, {
+                            autoHideMs: 9000,
+                        });
+                    }
                     return resp;
                 } catch (err) {
+                    chatChannelCatalogLoaded = false;
+                    chatChannelCatalogError =
+                        err?.message || "渠道配置加载失败，请检查管理服务连接状态";
+                    syncChatCatalogAvailability();
                     if (!silent) {
                         console.warn("刷新渠道配置失败", err);
+                        setStatus("err", chatChannelCatalogError, {
+                            autoHideMs: 9000,
+                        });
                     }
                     return null;
                 }

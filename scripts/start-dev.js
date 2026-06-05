@@ -11,8 +11,6 @@ const child = spawn(electronBin, [appRoot], {
     ...process.env,
     FMA_APP_NAME: process.env.FMA_APP_NAME || 'Flow Studio (Dev)',
     FMA_WINDOW_TITLE: process.env.FMA_WINDOW_TITLE || 'Flow Studio Control',
-    FLOW_AUTO_GEN_MACHINE_ID:
-      process.env.FLOW_AUTO_GEN_MACHINE_ID || 'b2133491-489a-4190-bda3-3b337af41197',
   },
 });
 

@@ -665,6 +665,8 @@ ipcMain.handle('chat:clearHistory', async () => chatGeneration.clearHistory());
 
 ipcMain.handle('chat:getAssetData', async (_evt, assetId) => chatGeneration.getAssetData(assetId));
 
+ipcMain.handle('chat:refreshTask', async (_evt, payload) => chatGeneration.refreshRemoteTask(payload));
+
 app.whenReady().then(() => {
   appendStartupLog('app.whenReady begin');
   if (process.platform === 'darwin') {

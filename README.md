@@ -61,6 +61,22 @@ FMA_NO_LOCAL_PROFILES=0 npm start
 
 聊天生成里“参考图”（reference image）会先写入本地临时文件，然后在登记资源（registerAsset）前按配置上传到对象存储（OSS 或 S3）。
 
+## 渠道与 provider 选择
+
+- 聊天生成仍通过 `GET /v1/client/channels` 拉取可用渠道目录。
+- 当渠道返回多个 provider 时，界面会默认跟随 `channels[].selected_provider`。
+- 如果你手动切换 provider，后续任务提交会显式带上该 `provider`；如果不手动切换，则会继续跟随服务端默认选择。
+- 提交前的参考图校验同样按 `provider` 解析：当前 `seedance/provider1` 仍要求至少 1 张参考图；`seedance/provider2` 支持纯 prompt 文生视频，参考图可选。
+- 如果渠道目录暂时加载失败，客户端现在会禁止提交并提示错误；不会再静默回退成默认 `服务商 1` 误导排查。
+- 设备启动校验会对 `/v1/client/device` 做一次保守重试，降低本地服务刚恢复时误报“校验失败”的概率。
+
+## 任务结果刷新（手动）
+
+当你已经在服务端回填了任务结果（例如补写 `task_artifacts/task_assets`、更新 `metadata.publicUrl`），但客户端页面仍显示“已完成但暂无可展示结果”时：
+
+- 在结果卡片右上角点 `i` 打开 Prompt 面板
+- 点击“刷新任务结果”即可重新从管理服务拉取该任务最新状态/结果并更新界面
+
 当 `FLOW_TASK_ASSET_TRANSPORT=oss`（默认）或 `FLOW_TASK_ASSET_TRANSPORT=s3` 时：
 
 - 客户端会把参考图上传到对象存储，并将对外可访问的 URL 写入 `asset.metadata.publicUrl`

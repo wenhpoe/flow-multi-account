@@ -7,12 +7,12 @@ const ossBridge = require('./ossBridge');
 const { readSettings, writeSettings } = require('./settingsStore');
 const taskClient = require('./taskClient');
 const taskStorage = require('./sharedTaskStorage');
+const { requiresReferenceImage } = require('../public/channelCatalogState');
 
 const DEFAULT_ASPECT_RATIO = 'IMAGE_ASPECT_RATIO_PORTRAIT';
 const DEFAULT_MODEL_NAME = 'GEM_PIX_2';
 const DEFAULT_SPEED = 'balanced';
 const DEFAULT_CHANNEL = 'flow';
-const DEFAULT_PROVIDER = '1';
 const DEFAULT_PRIORITY = 50;
 const DEFAULT_EXPIRE_HOURS = 24;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
@@ -37,6 +37,28 @@ function resolveDefaultModelName(channel) {
   return String(channel || '').trim().toLowerCase() === 'seedance'
     ? 'dreamina-seedance-2-0-fast-260128'
     : DEFAULT_MODEL_NAME;
+}
+
+function legacyRequiresReferenceImage(settings) {
+  const channel = String(settings?.channel || '').trim().toLowerCase();
+  if (channel !== 'seedance') return false;
+  return String(settings?.provider || '').trim() === '1';
+}
+
+async function channelRequiresReferenceImage(settings) {
+  const channelKey = String(settings?.channel || '').trim().toLowerCase();
+  if (!channelKey) return false;
+  try {
+    const response = await listChannels();
+    const channels = Array.isArray(response?.channels) ? response.channels : [];
+    const channel = channels.find((item) => String(item?.key || '').trim().toLowerCase() === channelKey) || null;
+    if (channel) {
+      return requiresReferenceImage(channel, settings?.provider);
+    }
+  } catch (err) {
+    console.warn(`[chatGeneration] resolve channel constraints failed: ${err?.message || err}`);
+  }
+  return legacyRequiresReferenceImage(settings);
 }
 
 const runtime = {
@@ -150,6 +172,10 @@ function mimeFromPath(filePath) {
 
 function normalizeSettings(input) {
   const payload = input && typeof input === 'object' ? input : {};
+  const channel = String(payload.channel || DEFAULT_CHANNEL).trim().toLowerCase() || DEFAULT_CHANNEL;
+  const defaultTaskType = channel === 'seedance'
+    ? 'video'
+    : 'image';
   const aspectRatio = VALID_ASPECT_RATIOS.has(String(payload.aspectRatio || '').trim())
     ? String(payload.aspectRatio).trim()
     : DEFAULT_ASPECT_RATIO;
@@ -158,7 +184,8 @@ function normalizeSettings(input) {
     : DEFAULT_SPEED;
   const taskType = VALID_TASK_TYPES.has(String(payload.taskType || '').trim().toLowerCase())
     ? String(payload.taskType).trim().toLowerCase()
-    : 'image';
+    : defaultTaskType;
+  const effectiveTaskType = channel === 'seedance' ? 'video' : taskType;
   const priority = Number.isFinite(Number(payload.priority))
     ? Math.max(1, Math.min(100, Math.round(Number(payload.priority))))
     : DEFAULT_PRIORITY;
@@ -174,10 +201,14 @@ function normalizeSettings(input) {
   const resolution = VALID_RESOLUTIONS.has(String(payload.resolution || '').trim())
     ? String(payload.resolution).trim()
     : DEFAULT_RESOLUTION;
+  const providerTouched =
+    payload.providerTouched === true ||
+    String(payload.providerTouched || '').trim().toLowerCase() === 'true';
   return {
     userDataDir: '动态分配账号槽位（执行侧）',
-    channel: String(payload.channel || DEFAULT_CHANNEL).trim().toLowerCase() || DEFAULT_CHANNEL,
-    provider: String(payload.provider || DEFAULT_PROVIDER).trim() || DEFAULT_PROVIDER,
+    channel,
+    provider: String(payload.provider || '').trim(),
+    providerTouched,
     aspectRatio,
     humanSpeedPreset,
     modelName:
@@ -185,7 +216,7 @@ function normalizeSettings(input) {
       || resolveDefaultModelName(payload.channel || DEFAULT_CHANNEL),
     seconds,
     resolution,
-    taskType,
+    taskType: effectiveTaskType,
     priority,
     expireHours,
     pollIntervalMs,
@@ -1078,6 +1109,115 @@ function startRemoteJob(job, { submit = false } = {}) {
   watchRemoteJob(job, { submit }).catch(() => {});
 }
 
+function buildRefreshStubJobFromMessage(message, { batchId = null, taskId = null } = {}) {
+  const meta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
+  const prompt = String(meta.prompt || '').trim();
+  const settings = normalizeSettings({
+    ...getCurrentSettings(),
+    aspectRatio: meta.aspectRatio,
+    requiredAccountId: meta.requiredAccountId || meta.required_account_id || '',
+  });
+  return {
+    id: String(message?.jobId || batchId || taskId || makeId('job')).trim() || makeId('job'),
+    prompt,
+    createdAt: message?.createdAt || nowIso(),
+    assistantMessageId: String(message?.id || '').trim(),
+    machineId: meta.machineId || null,
+    targetMachineId: meta.machineId || null,
+    referenceImage: null,
+    referenceImages: [],
+    submitSignature: '',
+    settings,
+    logs: Array.isArray(message?.logs) ? message.logs.slice() : [],
+    batchId: batchId || meta.batchId || null,
+    taskId: taskId || meta.taskId || null,
+    remoteStatus: meta.taskStatus || meta.status || 'queued',
+    remoteBatchStatus: meta.batchStatus || 'queued',
+    lastObservedStatus: meta.taskStatus || null,
+    lastClaimedBySlotId: meta.claimedBySlotId || null,
+    lastRequiredAccount: meta.requiredAccountId || null,
+    lastResolvedAccount: meta.accountProfile || null,
+    lastErrorCode: meta.errorCode || null,
+    lastErrorMessage: meta.errorMessage || null,
+    lastRunId: meta.currentTaskRunId || null,
+    lastRunStatus: meta.latestRunStatus || null,
+    lastArtifactCount: Number(meta.artifactCount || 0),
+    isPolling: false,
+  };
+}
+
+function reorderBatchTasksForTask(batch, taskId) {
+  const tasks = Array.isArray(batch?.tasks) ? batch.tasks : [];
+  if (!taskId || tasks.length <= 1) return batch;
+  const match = tasks.find((task) => String(task?.id || '').trim() === taskId) || null;
+  if (!match) return batch;
+  return { ...batch, tasks: [match, ...tasks.filter((task) => task !== match)] };
+}
+
+async function refreshRemoteTask(payload = {}) {
+  const requested = payload && typeof payload === 'object' ? payload : {};
+  const requestedTaskId = String(requested.taskId || '').trim() || null;
+  const requestedBatchId = String(requested.batchId || '').trim() || null;
+  if (!requestedTaskId && !requestedBatchId) throw new Error('taskId 或 batchId 必填');
+
+  await ensureHydrated();
+
+  let resolvedBatchId = requestedBatchId;
+  if (!resolvedBatchId && requestedTaskId) {
+    for (const message of runtime.messages) {
+      const meta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
+      if (String(meta.taskId || '').trim() === requestedTaskId && meta.batchId) {
+        resolvedBatchId = String(meta.batchId).trim();
+        break;
+      }
+    }
+  }
+
+  if (!resolvedBatchId && requestedTaskId) {
+    const response = await taskClient.getTask(requestedTaskId);
+    const task = response && response.task ? response.task : null;
+    resolvedBatchId = String(task?.batchId || '').trim() || null;
+  }
+
+  if (!resolvedBatchId) throw new Error('无法定位 batchId（请先刷新一次全局状态或提供 batchId）');
+
+  const response = await taskClient.getTaskBatch(resolvedBatchId);
+  const batch = response && response.batch ? response.batch : null;
+  if (!batch) throw new Error('任务状态查询失败：batch 缺失');
+
+  let updated = 0;
+  for (const message of runtime.messages) {
+    if (message?.role !== 'assistant') continue;
+    const meta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
+    const messageBatchId = String(meta.batchId || '').trim();
+    const messageTaskId = String(meta.taskId || '').trim();
+    const matches =
+      (requestedTaskId && messageTaskId === requestedTaskId)
+      || (messageBatchId && messageBatchId === resolvedBatchId);
+    if (!matches) continue;
+
+    const effectiveTaskId = requestedTaskId || messageTaskId || null;
+    const stubJob = buildRefreshStubJobFromMessage(message, {
+      batchId: resolvedBatchId,
+      taskId: effectiveTaskId,
+    });
+    const adjustedBatch = reorderBatchTasksForTask(batch, effectiveTaskId);
+    refreshJobMessage(stubJob, adjustedBatch);
+    updated += 1;
+  }
+
+  // If there were no existing messages (rare), still return ok.
+  if (updated > 0) {
+    markStateDirty();
+  }
+  return {
+    ok: true,
+    batchId: resolvedBatchId,
+    taskId: requestedTaskId,
+    updatedMessages: updated,
+  };
+}
+
 async function ensureHydrated() {
   if (runtime.hydrated) return;
   if (runtime.hydrationPromise) {
@@ -1195,15 +1335,20 @@ async function sendMessage(payload) {
   const prompt = String(payload?.prompt || '').trim();
   if (!prompt) throw new Error('请输入提示词');
 
+  const payloadSettings = payload?.settings && typeof payload.settings === 'object' ? payload.settings : {};
+  const topLevelOverrides = {};
+  if (payload && typeof payload === 'object') {
+    if (payload.requiredAccountId != null || payload.required_account_id != null) {
+      topLevelOverrides.requiredAccountId = String(payload.requiredAccountId || payload.required_account_id || '').trim();
+    }
+    if (payload.taskType != null || payload.task_type != null) {
+      topLevelOverrides.taskType = payload.taskType || payload.task_type;
+    }
+  }
   const settings = persistSettings({
     ...getCurrentSettings(),
-    ...(payload?.settings && typeof payload.settings === 'object' ? payload.settings : {}),
-    ...(payload && typeof payload === 'object'
-      ? {
-          requiredAccountId: payload.requiredAccountId || payload.required_account_id || '',
-          taskType: payload.taskType || payload.task_type || undefined,
-        }
-      : {}),
+    ...payloadSettings,
+    ...topLevelOverrides,
   });
   const device = deviceState.readDeviceState();
   if (!device.machineId || !device.token) throw new Error('设备未激活，无法提交任务');
@@ -1211,6 +1356,9 @@ async function sendMessage(payload) {
   const referenceImages = parseReferenceImages(payload);
   const referenceImage = referenceImages[0] || null;
   const referenceName = referenceNamesLabel(referenceImages);
+  if (referenceImages.length === 0 && await channelRequiresReferenceImage(settings)) {
+    throw new Error('当前渠道/服务商需要至少 1 张参考图');
+  }
   const submitSignature = buildSubmitSignature({
     prompt,
     settings,
@@ -1392,6 +1540,7 @@ module.exports = {
   getState,
   listTargetMachines,
   listChannels,
+  refreshRemoteTask,
   sendMessage,
   updateSettings,
 };

@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('flowApi', {
   sendChatMessage: (payload) => ipcRenderer.invoke('chat:send', payload || {}),
   clearChatHistory: () => ipcRenderer.invoke('chat:clearHistory'),
   getChatAssetData: (assetId) => ipcRenderer.invoke('chat:getAssetData', assetId),
+  refreshChatTask: (payload) => ipcRenderer.invoke('chat:refreshTask', payload || {}),
   activateDevice: (activationCode, serverUrl) =>
     ipcRenderer.invoke('device:activate', { activationCode, serverUrl }),
   setServerUrl: (serverUrl) => ipcRenderer.invoke('device:setServerUrl', { serverUrl }),
