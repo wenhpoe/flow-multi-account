@@ -20,6 +20,33 @@ const DEFAULT_RESOLUTION = '720p';
 const MAX_MESSAGES = 80;
 const MAX_LOG_LINES = 10;
 const MAX_SEEDANCE_REFERENCE_IMAGES = 9;
+const MAX_SEEDANCE_REFERENCE_AUDIO = 3;
+const MAX_SEEDANCE_REFERENCE_VIDEOS = 3;
+const MAX_SEEDANCE_REFERENCE_MEDIA =
+  MAX_SEEDANCE_REFERENCE_IMAGES + MAX_SEEDANCE_REFERENCE_AUDIO + MAX_SEEDANCE_REFERENCE_VIDEOS;
+const REFERENCE_MEDIA_LIMITS = Object.freeze({
+  image: MAX_SEEDANCE_REFERENCE_IMAGES,
+  audio: MAX_SEEDANCE_REFERENCE_AUDIO,
+  video: MAX_SEEDANCE_REFERENCE_VIDEOS,
+});
+const REFERENCE_MEDIA_MAX_BYTES = Object.freeze({
+  image: 30 * 1024 * 1024,
+  audio: 15 * 1024 * 1024,
+  video: 200 * 1024 * 1024,
+});
+const REFERENCE_MEDIA_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+  'video/mp4',
+  'video/quicktime',
+  'audio/mpeg',
+  'audio/mp3',
+  'audio/wav',
+  'audio/wave',
+  'audio/x-wav',
+]);
 const RESTORE_BATCH_LIMIT = Math.max(10, Math.floor(MAX_MESSAGES / 2));
 
 const VALID_ASPECT_RATIOS = new Set([
@@ -92,16 +119,20 @@ function hashText(value) {
   return crypto.createHash('sha256').update(String(value || '')).digest('hex');
 }
 
-function buildReferenceSignature(referenceImages) {
-  const images = Array.isArray(referenceImages) ? referenceImages : [];
-  return images.map((image) => ({
-    name: String(image?.name || '').trim(),
-    dataHash: image?.dataUrl ? hashText(image.dataUrl) : '',
-    hasData: Boolean(image?.dataUrl),
+function buildReferenceSignature(referenceMedia) {
+  const media = Array.isArray(referenceMedia) ? referenceMedia : [];
+  return media.map((item) => ({
+    name: String(item?.name || '').trim(),
+    mediaType: String(item?.mediaType || '').trim().toLowerCase(),
+    mimeType: String(item?.mimeType || '').trim().toLowerCase(),
+    sizeBytes: Number(item?.sizeBytes || 0) || 0,
+    durationSeconds: Number(item?.durationSeconds || 0) || 0,
+    dataHash: item?.dataUrl ? hashText(item.dataUrl) : '',
+    hasData: Boolean(item?.dataUrl),
   }));
 }
 
-function buildSubmitSignature({ prompt, settings, targetMachineId, referenceImages }) {
+function buildSubmitSignature({ prompt, settings, targetMachineId, referenceMedia, referenceImages }) {
   const source = {
     version: 1,
     prompt: String(prompt || '').trim(),
@@ -115,7 +146,9 @@ function buildSubmitSignature({ prompt, settings, targetMachineId, referenceImag
     resolution: String(settings?.resolution || '').trim(),
     humanSpeedPreset: String(settings?.humanSpeedPreset || '').trim(),
     requiredAccountId: String(settings?.requiredAccountId || '').trim(),
-    references: buildReferenceSignature(referenceImages),
+    references: buildReferenceSignature(
+      Array.isArray(referenceMedia) ? referenceMedia : referenceImages,
+    ),
   };
   return hashText(JSON.stringify(source));
 }
@@ -155,6 +188,11 @@ function mimeToExtension(mimeType) {
     'image/gif': '.gif',
     'video/mp4': '.mp4',
     'video/quicktime': '.mov',
+    'audio/mpeg': '.mp3',
+    'audio/mp3': '.mp3',
+    'audio/wav': '.wav',
+    'audio/wave': '.wav',
+    'audio/x-wav': '.wav',
   };
   return map[String(mimeType || '').toLowerCase()] || '.bin';
 }
@@ -167,6 +205,8 @@ function mimeFromPath(filePath) {
   if (ext === '.gif') return 'image/gif';
   if (ext === '.mp4') return 'video/mp4';
   if (ext === '.mov') return 'video/quicktime';
+  if (ext === '.mp3') return 'audio/mpeg';
+  if (ext === '.wav') return 'audio/wav';
   return 'application/octet-stream';
 }
 
@@ -360,12 +400,34 @@ function taskHasReferenceAsset(task) {
     || (Array.isArray(inputPayload.referenceAssetIds) && inputPayload.referenceAssetIds.length > 0);
 }
 
-function buildRestoredReferenceImage(task) {
-  if (!taskHasReferenceAsset(task)) return null;
-  return {
+function buildRestoredReferenceMedia(task) {
+  const inputPayload = task?.inputPayload && typeof task.inputPayload === 'object' ? task.inputPayload : {};
+  const params = inputPayload.params && typeof inputPayload.params === 'object' ? inputPayload.params : {};
+  const extraBody = params.extra_body && typeof params.extra_body === 'object' ? params.extra_body : {};
+  const rawMedia = Array.isArray(extraBody.reference_media) ? extraBody.reference_media : [];
+  if (rawMedia.length) {
+    return rawMedia.map((item) => ({
+      name: String(item?.name || item?.asset_id || '已使用参考媒体'),
+      dataUrl: null,
+      mimeType: String(item?.mime_type || '').trim().toLowerCase(),
+      mediaType: String(item?.media_type || '').trim().toLowerCase(),
+      sizeBytes: Number(item?.size_bytes || 0) || 0,
+      durationSeconds: Number(item?.duration_seconds || 0) || 0,
+    }));
+  }
+  if (!taskHasReferenceAsset(task)) return [];
+  return [{
     name: '已使用参考图',
     dataUrl: null,
-  };
+    mimeType: 'image/png',
+    mediaType: 'image',
+    sizeBytes: 0,
+    durationSeconds: 0,
+  }];
+}
+
+function buildRestoredReferenceImage(task) {
+  return buildRestoredReferenceMedia(task).find((item) => item.mediaType === 'image') || null;
 }
 
 function buildRestoredJobSettings(task, batch) {
@@ -408,8 +470,9 @@ function buildRestoredConversation(batch, task, { sortOrderBase = 0 } = {}) {
   if (!prompt) return null;
   const createdAt = task?.createdAt || batch?.createdAt || nowIso();
   const jobId = String(batch?.idempotencyKey || batch?.id || task?.id || makeId('job')).trim();
-  const referenceImage = buildRestoredReferenceImage(task);
-  const referenceImages = referenceImage ? [referenceImage] : [];
+  const referenceMedia = buildRestoredReferenceMedia(task);
+  const referenceImage = referenceMedia.find((item) => item.mediaType === 'image') || null;
+  const referenceImages = referenceMedia.filter((item) => item.mediaType === 'image');
   const settings = buildRestoredJobSettings(task, batch);
   const assistantMessageId = `restored_assistant_${String(task?.id || jobId)}`;
   const userMessage = {
@@ -422,7 +485,8 @@ function buildRestoredConversation(batch, task, { sortOrderBase = 0 } = {}) {
     attachments: [],
     meta: {
       prompt,
-      referenceName: referenceImage?.name || null,
+      referenceName: referenceNamesLabel(referenceMedia) || referenceImage?.name || null,
+      referenceCount: referenceMedia.length,
       aspectRatio: settings.aspectRatio,
     },
   };
@@ -439,7 +503,8 @@ function buildRestoredConversation(batch, task, { sortOrderBase = 0 } = {}) {
     meta: {
       prompt,
       aspectRatio: settings.aspectRatio,
-      referenceName: referenceImage?.name || null,
+      referenceName: referenceNamesLabel(referenceMedia) || referenceImage?.name || null,
+      referenceCount: referenceMedia.length,
       batchId: batch?.id || null,
       taskId: task?.id || null,
       machineId: batch?.targetMachineId || task?.targetMachineId || null,
@@ -455,11 +520,12 @@ function buildRestoredConversation(batch, task, { sortOrderBase = 0 } = {}) {
     targetMachineId: batch?.targetMachineId || task?.targetMachineId || null,
     referenceImage,
     referenceImages,
+    referenceMedia,
     submitSignature: buildSubmitSignature({
       prompt,
       settings,
       targetMachineId: batch?.targetMachineId || task?.targetMachineId || null,
-      referenceImages,
+      referenceMedia,
     }),
     settings,
     logs: [],
@@ -749,8 +815,10 @@ function refreshJobMessage(job, batch) {
   const meta = {
     prompt: job.prompt,
     aspectRatio: job.settings.aspectRatio,
-    referenceName: referenceNamesLabel(job.referenceImages) || job.referenceImage?.name || null,
-    referenceCount: Array.isArray(job.referenceImages) ? job.referenceImages.length : (job.referenceImage ? 1 : 0),
+    referenceName: referenceNamesLabel(job.referenceMedia || job.referenceImages) || job.referenceImage?.name || null,
+    referenceCount: Array.isArray(job.referenceMedia)
+      ? job.referenceMedia.length
+      : (Array.isArray(job.referenceImages) ? job.referenceImages.length : (job.referenceImage ? 1 : 0)),
     batchId: batch.id,
     taskId: task.id,
     taskStatus: task.status,
@@ -815,51 +883,151 @@ function refreshJobMessage(job, batch) {
   });
 }
 
-function parseReferenceImage(payload) {
-  if (!payload || typeof payload !== 'object') return null;
-  const name = String(payload.name || '').trim() || 'reference.png';
-  const dataUrl = String(payload.dataUrl || '').trim();
-  if (!dataUrl) return null;
-  return { name, dataUrl };
+function mediaTypeFromMimeType(mimeType) {
+  const value = String(mimeType || '').trim().toLowerCase();
+  if (value.startsWith('image/')) return 'image';
+  if (value.startsWith('audio/')) return 'audio';
+  if (value.startsWith('video/')) return 'video';
+  return '';
 }
 
-function parseReferenceImages(payload) {
-  const items = Array.isArray(payload?.referenceImages)
-    ? payload.referenceImages
-    : payload?.referenceImage
-      ? [payload.referenceImage]
-      : [];
+function parseDataUrl(dataUrl) {
+  const value = String(dataUrl || '').trim();
+  const match = value.match(/^data:([^;,]+)(?:;[^,]*)?;base64,([A-Za-z0-9+/=\s]+)$/i);
+  if (!match) throw new Error('参考媒体格式不正确');
+  const mimeType = String(match[1] || '').trim().toLowerCase();
+  const base64Data = String(match[2] || '').replace(/\s+/g, '');
+  if (!base64Data) throw new Error('参考媒体内容为空');
+  const bytes = Buffer.from(base64Data, 'base64');
+  if (!bytes.length) throw new Error('参考媒体内容无效');
+  return { mimeType, base64Data, bytes };
+}
+
+function normalizeReferenceMediaItem(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  const name = String(payload.name || '').trim() || 'reference-media';
+  const dataUrl = String(payload.dataUrl || '').trim();
+  if (!dataUrl) return null;
+  const parsedDataUrl = parseDataUrl(dataUrl);
+  const declaredMimeType = String(payload.mimeType || '').trim().toLowerCase();
+  const mimeType = declaredMimeType || parsedDataUrl.mimeType;
+  if (!REFERENCE_MEDIA_MIME_TYPES.has(mimeType)) {
+    throw new Error(`${name} 格式不支持`);
+  }
+  if (
+    REFERENCE_MEDIA_MIME_TYPES.has(parsedDataUrl.mimeType) &&
+    parsedDataUrl.mimeType !== mimeType
+  ) {
+    throw new Error(`${name} MIME 类型与媒体内容不一致`);
+  }
+  const mediaType = String(payload.mediaType || '').trim().toLowerCase() || mediaTypeFromMimeType(mimeType);
+  if (!Object.prototype.hasOwnProperty.call(REFERENCE_MEDIA_LIMITS, mediaType)) {
+    throw new Error(`${name} 媒体类型不支持`);
+  }
+  if (mediaTypeFromMimeType(mimeType) !== mediaType) {
+    throw new Error(`${name} 媒体类型与 MIME 类型不一致`);
+  }
+  const sizeBytes = parsedDataUrl.bytes.length;
+  const maxBytes = REFERENCE_MEDIA_MAX_BYTES[mediaType];
+  if (
+    (mediaType === 'image' && sizeBytes >= maxBytes) ||
+    (mediaType !== 'image' && sizeBytes > maxBytes)
+  ) {
+    throw new Error(`${name} 超过${Math.round(maxBytes / 1024 / 1024)}MB大小限制`);
+  }
+  const rawDuration = payload.durationSeconds;
+  const durationSeconds = rawDuration == null || rawDuration === '' ? null : Number(rawDuration);
+  if (mediaType !== 'image') {
+    if (!Number.isFinite(durationSeconds) || durationSeconds < 2 || durationSeconds > 15) {
+      throw new Error(`${name} 时长需在 2-15 秒之间`);
+    }
+  }
+  return {
+    name,
+    dataUrl,
+    mimeType,
+    mediaType,
+    sizeBytes,
+    durationSeconds: durationSeconds == null ? null : durationSeconds,
+  };
+}
+
+function parseReferenceMedia(payload) {
+  let items = Array.isArray(payload?.referenceMedia) ? payload.referenceMedia : null;
+  if (!items || !items.length) {
+    items = Array.isArray(payload?.referenceImages)
+      ? payload.referenceImages
+      : payload?.referenceImage
+        ? [payload.referenceImage]
+        : [];
+  }
   const parsed = [];
   const seen = new Set();
   for (const item of items) {
-    const image = parseReferenceImage(item);
-    if (!image) continue;
-    const key = `${image.name}\n${image.dataUrl}`;
+    const media = normalizeReferenceMediaItem(item);
+    if (!media) continue;
+    const key = `${media.mediaType}\n${media.name}\n${media.dataUrl}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    parsed.push(image);
-    if (parsed.length >= MAX_SEEDANCE_REFERENCE_IMAGES) break;
+    parsed.push(media);
+    if (parsed.length >= MAX_SEEDANCE_REFERENCE_MEDIA) break;
   }
   return parsed;
 }
 
-function referenceNamesLabel(referenceImages) {
-  const images = Array.isArray(referenceImages) ? referenceImages : [];
-  if (!images.length) return null;
-  if (images.length === 1) return images[0].name || 'reference.png';
-  const firstName = images[0].name || 'reference.png';
-  return `${firstName} 等 ${images.length} 张`;
+function parseReferenceImages(payload) {
+  return parseReferenceMedia(payload).filter((item) => item.mediaType === 'image');
 }
 
-function writeReferenceImage({ machineId, jobId, referenceImage }) {
-  if (!referenceImage) return null;
-  const match = String(referenceImage.dataUrl || '').match(/^data:([^;]+);base64,(.+)$/);
-  if (!match) throw new Error('参考图格式不正确');
-  const mimeType = match[1];
-  const base64Data = match[2];
-  const ext = path.extname(referenceImage.name) || mimeToExtension(mimeType);
+function validateReferenceMedia(media, settings) {
+  const items = Array.isArray(media) ? media : [];
+  const counts = { image: 0, audio: 0, video: 0 };
+  for (const item of items) {
+    const mediaType = item?.mediaType;
+    if (!Object.prototype.hasOwnProperty.call(counts, mediaType)) {
+      throw new Error('参考媒体类型不支持');
+    }
+    counts[mediaType] += 1;
+    if (counts[mediaType] > REFERENCE_MEDIA_LIMITS[mediaType]) {
+      throw new Error(`参考${mediaType}数量超过上限`);
+    }
+  }
+  for (const mediaType of ['audio', 'video']) {
+    const totalDuration = items
+      .filter((item) => item.mediaType === mediaType)
+      .reduce((sum, item) => sum + Number(item.durationSeconds || 0), 0);
+    if (totalDuration > 15) throw new Error(`参考${mediaType}总时长不能超过 15 秒`);
+  }
+  const channel = String(settings?.channel || '').trim().toLowerCase();
+  const provider = String(settings?.provider || '').trim();
+  const hasNonImage = counts.audio > 0 || counts.video > 0;
+  if (channel !== 'seedance' && hasNonImage) {
+    throw new Error('当前 Flow 任务只支持参考图片');
+  }
+  if (channel === 'seedance' && !['2', '3'].includes(provider) && hasNonImage) {
+    throw new Error('当前 Seedance 服务商暂不支持参考音频或视频，请切换到服务商 2/3');
+  }
+  if (channel === 'seedance' && counts.audio > 0 && counts.image === 0 && counts.video === 0) {
+    throw new Error('参考音频不能单独使用，请至少提供参考图片或参考视频');
+  }
+}
+
+function referenceNamesLabel(referenceMedia) {
+  const media = Array.isArray(referenceMedia) ? referenceMedia : [];
+  if (!media.length) return null;
+  if (media.length === 1) return media[0].name || 'reference-media';
+  const firstName = media[0].name || 'reference-media';
+  return `${firstName} 等 ${media.length} 项`;
+}
+
+function writeReferenceMedia({ machineId, jobId, referenceMedia }) {
+  if (!referenceMedia) return null;
+  const parsed = parseDataUrl(referenceMedia.dataUrl);
+  const mimeType = referenceMedia.mimeType || parsed.mimeType;
+  const originalExtension = path.extname(referenceMedia.name || '').toLowerCase();
+  const ext = originalExtension || mimeToExtension(mimeType);
   const fileName = sanitizeFilename(
-    `${path.basename(referenceImage.name, path.extname(referenceImage.name)) || 'reference'}${ext.startsWith('.') ? ext : `.${ext}`}`,
+    `${path.basename(referenceMedia.name, path.extname(referenceMedia.name)) || 'reference'}${ext.startsWith('.') ? ext : `.${ext}`}`,
   );
   const assetId = makeId('input');
   const location = taskStorage.buildSubmitAssetLocation({
@@ -867,7 +1035,7 @@ function writeReferenceImage({ machineId, jobId, referenceImage }) {
     assetId: `${jobId}_${assetId}`,
     fileName,
   });
-  fs.writeFileSync(location.absolutePath, Buffer.from(base64Data, 'base64'));
+  fs.writeFileSync(location.absolutePath, parsed.bytes);
   return {
     assetId,
     location,
@@ -877,12 +1045,12 @@ function writeReferenceImage({ machineId, jobId, referenceImage }) {
   };
 }
 
-async function registerReferenceAsset(job) {
-  if (!job.referenceImage) return null;
-  const written = writeReferenceImage({
+async function registerReferenceAsset(job, referenceMedia, order) {
+  if (!referenceMedia) return null;
+  const written = writeReferenceMedia({
     machineId: job.machineId,
     jobId: job.id,
-    referenceImage: job.referenceImage,
+    referenceMedia,
   });
   let relativePath = written.location.relativePath;
   let remoteUrl = null;
@@ -891,7 +1059,10 @@ async function registerReferenceAsset(job) {
     source: 'flow_multi_account_chat',
     machineId: job.machineId,
     jobId: job.id,
-    referenceName: job.referenceImage.name,
+    referenceName: referenceMedia.name,
+    referenceMediaType: referenceMedia.mediaType,
+    referenceOrder: order,
+    durationSeconds: referenceMedia.durationSeconds,
   };
   if (ossBridge.isOssTransportEnabled() || ossBridge.isS3TransportEnabled()) {
     objectKey = ossBridge.buildObjectKey({
@@ -927,30 +1098,26 @@ async function registerReferenceAsset(job) {
     mimeType: written.mimeType,
     name: written.fileName,
     size: written.sizeBytes,
-    dataUrl: job.referenceImage.dataUrl,
+    dataUrl: referenceMedia.dataUrl,
     remoteUrl,
     objectKey: remoteUrl ? (objectKey || relativePath) : null,
     transport: remoteUrl ? 'oss' : 'local',
   });
-  return response?.asset || null;
+  if (!response?.asset) throw new Error(`参考${referenceMedia.mediaType}登记失败`);
+  return response.asset;
 }
 
 async function registerReferenceAssets(job) {
-  const images = Array.isArray(job.referenceImages)
-    ? job.referenceImages.slice(0, MAX_SEEDANCE_REFERENCE_IMAGES)
+  const media = Array.isArray(job.referenceMedia)
+    ? job.referenceMedia.slice(0, MAX_SEEDANCE_REFERENCE_MEDIA)
     : [];
-  if (!images.length) return [];
+  if (!media.length) return [];
   const assets = [];
-  for (let index = 0; index < images.length; index += 1) {
-    const image = images[index];
-    const asset = await registerReferenceAsset({
-      ...job,
-      referenceImage: image,
-    });
-    if (asset) {
-      assets.push(asset);
-      appendJobLog(job, `参考图 ${index + 1}/${images.length} 已登记：${asset.id || 'unknown'}`);
-    }
+  for (let index = 0; index < media.length; index += 1) {
+    const item = media[index];
+    const asset = await registerReferenceAsset(job, item, index);
+    assets.push(asset);
+    appendJobLog(job, `参考${item.mediaType} ${index + 1}/${media.length} 已登记：${asset.id || 'unknown'}`);
   }
   return assets;
 }
@@ -964,12 +1131,23 @@ async function submitRemoteJob(job) {
 
   const referenceAssets = await registerReferenceAssets(job);
   const referenceAsset = referenceAssets[0] || null;
-  const referenceImageUrls = referenceAssets
-    .map((asset) => String(asset?.metadata?.publicUrl || '').trim())
-    .filter(Boolean);
+  const isSeedance = String(job.settings.channel || '').trim().toLowerCase() === 'seedance';
+  const referenceMediaPayload = referenceAssets.map((asset, index) => {
+    const media = job.referenceMedia[index];
+    const publicUrl = String(asset?.metadata?.publicUrl || '').trim();
+    if (isSeedance && !publicUrl) {
+      throw new Error('Seedance 参考媒体需要公开 URL，请配置 OSS/S3/CDN 后重试');
+    }
+    return {
+      asset_id: String(asset?.id || '').trim(),
+      media_type: String(media?.mediaType || '').trim(),
+      mime_type: String(media?.mimeType || '').trim(),
+      url: publicUrl,
+      order: index,
+    };
+  });
 
   const expireAt = new Date(Date.now() + job.settings.expireHours * 60 * 60 * 1000).toISOString();
-  const isSeedance = String(job.settings.channel || '').trim().toLowerCase() === 'seedance';
   const response = await taskClient.createTaskBatch({
     idempotencyKey: job.id,
     targetMachineId: job.targetMachineId,
@@ -1026,8 +1204,8 @@ async function submitRemoteJob(job) {
                 },
                 extra_body: {
                   resolution: job.settings.resolution || '720p',
-                  ...(referenceImageUrls.length
-                    ? { images: referenceImageUrls }
+                  ...(referenceMediaPayload.length
+                    ? { reference_media: referenceMediaPayload }
                     : {}),
                 },
               },
@@ -1090,8 +1268,10 @@ async function watchRemoteJob(job, { submit = false } = {}) {
       meta: {
         prompt: job.prompt,
         aspectRatio: job.settings.aspectRatio,
-        referenceName: referenceNamesLabel(job.referenceImages) || job.referenceImage?.name || null,
-        referenceCount: Array.isArray(job.referenceImages) ? job.referenceImages.length : (job.referenceImage ? 1 : 0),
+        referenceName: referenceNamesLabel(job.referenceMedia || job.referenceImages) || job.referenceImage?.name || null,
+        referenceCount: Array.isArray(job.referenceMedia)
+          ? job.referenceMedia.length
+          : (Array.isArray(job.referenceImages) ? job.referenceImages.length : (job.referenceImage ? 1 : 0)),
         batchId: job.batchId || null,
         errorCode: errorDetails.code || null,
         errorMessage,
@@ -1126,6 +1306,7 @@ function buildRefreshStubJobFromMessage(message, { batchId = null, taskId = null
     targetMachineId: meta.machineId || null,
     referenceImage: null,
     referenceImages: [],
+    referenceMedia: [],
     submitSignature: '',
     settings,
     logs: Array.isArray(message?.logs) ? message.logs.slice() : [],
@@ -1353,9 +1534,11 @@ async function sendMessage(payload) {
   const device = deviceState.readDeviceState();
   if (!device.machineId || !device.token) throw new Error('设备未激活，无法提交任务');
   const targetMachineId = resolveTargetMachineId(settings, device);
-  const referenceImages = parseReferenceImages(payload);
+  const referenceMedia = parseReferenceMedia(payload);
+  const referenceImages = referenceMedia.filter((item) => item.mediaType === 'image');
   const referenceImage = referenceImages[0] || null;
-  const referenceName = referenceNamesLabel(referenceImages);
+  const referenceName = referenceNamesLabel(referenceMedia);
+  validateReferenceMedia(referenceMedia, settings);
   if (referenceImages.length === 0 && await channelRequiresReferenceImage(settings)) {
     throw new Error('当前渠道/服务商需要至少 1 张参考图');
   }
@@ -1363,7 +1546,7 @@ async function sendMessage(payload) {
     prompt,
     settings,
     targetMachineId,
-    referenceImages,
+    referenceMedia,
   });
   const duplicateJob = findActiveDuplicateJob(submitSignature);
   if (duplicateJob) {
@@ -1390,7 +1573,7 @@ async function sendMessage(payload) {
     meta: {
       prompt,
       referenceName,
-      referenceCount: referenceImages.length,
+      referenceCount: referenceMedia.length,
       aspectRatio: settings.aspectRatio,
     },
   });
@@ -1408,7 +1591,7 @@ async function sendMessage(payload) {
       prompt,
       aspectRatio: settings.aspectRatio,
       referenceName,
-      referenceCount: referenceImages.length,
+      referenceCount: referenceMedia.length,
       machineId: targetMachineId,
       requiredAccountId: settings.requiredAccountId || null,
     },
@@ -1423,6 +1606,7 @@ async function sendMessage(payload) {
     targetMachineId,
     referenceImage,
     referenceImages,
+    referenceMedia,
     submitSignature,
     settings,
     logs: [],

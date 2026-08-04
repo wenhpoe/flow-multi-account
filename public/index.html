@@ -5449,6 +5449,87 @@
                 flex: 0 0 auto;
             }
 
+            .seedance-reference-items {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                max-width: min(44vw, 460px);
+                overflow-x: auto;
+                padding: 2px 0;
+                scrollbar-width: thin;
+            }
+
+            .seedance-reference-items[hidden] {
+                display: none;
+            }
+
+            .seedance-reference-item {
+                position: relative;
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                min-width: 92px;
+                max-width: 190px;
+                min-height: 48px;
+                padding: 4px 22px 4px 5px;
+                border: 1px solid var(--flow-toolbar-border);
+                border-radius: 12px;
+                background: var(--flow-compose-bg);
+                color: var(--flow-text);
+                box-shadow: 0 8px 18px rgba(5, 9, 18, 0.12);
+            }
+
+            .seedance-reference-item img,
+            .seedance-reference-item video {
+                width: 42px;
+                height: 38px;
+                flex: 0 0 auto;
+                border-radius: 8px;
+                background: rgba(8, 12, 18, 0.72);
+                object-fit: cover;
+            }
+
+            .seedance-reference-item audio {
+                width: 150px;
+                max-width: 100%;
+                height: 32px;
+            }
+
+            .seedance-reference-item-name {
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                font-size: 10px;
+                line-height: 1.25;
+            }
+
+            .seedance-reference-item-type {
+                display: block;
+                color: var(--flow-text-soft);
+                font-size: 9px;
+            }
+
+            .seedance-reference-item-remove {
+                position: absolute;
+                top: 3px;
+                right: 3px;
+                width: 17px;
+                height: 17px;
+                padding: 0;
+                border: 0;
+                border-radius: 999px;
+                background: rgba(8, 11, 18, 0.72);
+                color: rgba(240, 245, 255, 0.9);
+                cursor: pointer;
+                font-size: 13px;
+                line-height: 17px;
+            }
+
+            .seedance-reference-item-remove:hover {
+                background: rgba(33, 68, 132, 0.94);
+            }
+
             .reference-group-HKgRli {
                 position: relative;
                 width: 100%;
@@ -6574,7 +6655,7 @@
                                     <input
                                         id="chatReferenceInput"
                                         type="file"
-                                        accept="image/*"
+                                        accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,audio/mpeg,audio/mp3,audio/wav,audio/wave,audio/x-wav"
                                         multiple
                                         hidden
                                     />
@@ -6611,7 +6692,7 @@
                                                 >
                                                     <img
                                                         id="chatReferencePreview"
-                                                        alt="Reference preview"
+                                                        alt="参考媒体预览"
                                                         hidden
                                                     />
                                                     <div
@@ -6659,7 +6740,7 @@
                                                     <span
                                                         class="composer-reference-hint"
                                                         id="chatReferenceHint"
-                                                        >点击或拖入参考图</span
+                                                        >点击或拖入参考媒体</span
                                                     >
                                                     <span
                                                         class="composer-reference-cta"
@@ -6670,12 +6751,18 @@
                                             </div>
                                         </div>
                                     </div>
+                                    <div
+                                        id="chatReferenceItems"
+                                        class="seedance-reference-items"
+                                        aria-live="polite"
+                                        hidden
+                                    ></div>
                                     <button
                                         class="composer-reference-clear"
                                         id="btnChatClearReference"
                                         type="button"
-                                        aria-label="移除参考"
-                                        title="移除参考"
+                                        aria-label="移除全部参考媒体"
+                                        title="移除全部参考媒体"
                                         hidden
                                     >
                                         <svg
@@ -6762,6 +6849,13 @@
                                     </svg>
                                 </button>
                             </div>
+                            <div
+                                class="status chat-status"
+                                id="status"
+                                role="status"
+                                aria-live="polite"
+                                hidden
+                            ></div>
                         </div>
                     </div>
                 </div>
@@ -6880,6 +6974,7 @@
 
             let statusRefreshTimer = null;
             let chatRefreshTimer = null;
+            let statusTimer = null;
             let refreshing = false;
             let chatRefreshing = false;
             let currentChatState = null;
@@ -7320,6 +7415,46 @@
             const chatAssetLoads = new Map();
             let chatAssetRenderRevision = 0;
             const MAX_SEEDANCE_REFERENCE_IMAGES = 9;
+            const MAX_SEEDANCE_REFERENCE_AUDIO = 3;
+            const MAX_SEEDANCE_REFERENCE_VIDEOS = 3;
+            const MAX_SEEDANCE_REFERENCE_MEDIA =
+                MAX_SEEDANCE_REFERENCE_IMAGES +
+                MAX_SEEDANCE_REFERENCE_AUDIO +
+                MAX_SEEDANCE_REFERENCE_VIDEOS;
+            const REFERENCE_MEDIA_LIMITS = Object.freeze({
+                image: MAX_SEEDANCE_REFERENCE_IMAGES,
+                audio: MAX_SEEDANCE_REFERENCE_AUDIO,
+                video: MAX_SEEDANCE_REFERENCE_VIDEOS,
+            });
+            const REFERENCE_MEDIA_MIME_TYPES = new Set([
+                "image/png",
+                "image/jpeg",
+                "image/webp",
+                "image/gif",
+                "video/mp4",
+                "video/quicktime",
+                "audio/mpeg",
+                "audio/mp3",
+                "audio/wav",
+                "audio/wave",
+                "audio/x-wav",
+            ]);
+            const REFERENCE_MEDIA_EXTENSION_MIMES = Object.freeze({
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".webp": "image/webp",
+                ".gif": "image/gif",
+                ".mp4": "video/mp4",
+                ".mov": "video/quicktime",
+                ".mp3": "audio/mpeg",
+                ".wav": "audio/wav",
+            });
+            const REFERENCE_MEDIA_MAX_BYTES = Object.freeze({
+                image: 30 * 1024 * 1024,
+                audio: 15 * 1024 * 1024,
+                video: 200 * 1024 * 1024,
+            });
             const MAX_RENDERED_RESULT_VIDEOS = 40;
             const MAX_ANIMATED_PLACEHOLDERS = 4;
             const APP_PAGE_STORAGE_KEY = "flow-studio-active-page";
@@ -7598,6 +7733,103 @@
                 };
             }
 
+            function referenceMediaType(item) {
+                const explicit = String(item?.mediaType || "").trim().toLowerCase();
+                if (Object.prototype.hasOwnProperty.call(REFERENCE_MEDIA_LIMITS, explicit)) {
+                    return explicit;
+                }
+                const mimeType = String(item?.mimeType || "").trim().toLowerCase();
+                if (mimeType.startsWith("image/")) return "image";
+                if (mimeType.startsWith("audio/")) return "audio";
+                if (mimeType.startsWith("video/")) return "video";
+                return "";
+            }
+
+            function referenceMediaTypeLabel(mediaType) {
+                if (mediaType === "image") return "图片";
+                if (mediaType === "audio") return "音频";
+                if (mediaType === "video") return "视频";
+                return "媒体";
+            }
+
+            function referenceMediaCounts(references) {
+                const counts = { image: 0, audio: 0, video: 0 };
+                for (const item of Array.isArray(references) ? references : []) {
+                    const mediaType = referenceMediaType(item);
+                    if (Object.prototype.hasOwnProperty.call(counts, mediaType)) {
+                        counts[mediaType] += 1;
+                    }
+                }
+                return counts;
+            }
+
+            function referenceMediaSummary(references) {
+                const counts = referenceMediaCounts(references);
+                return `图片 ${counts.image}/${MAX_SEEDANCE_REFERENCE_IMAGES} · 音频 ${counts.audio}/${MAX_SEEDANCE_REFERENCE_AUDIO} · 视频 ${counts.video}/${MAX_SEEDANCE_REFERENCE_VIDEOS}`;
+            }
+
+            function renderChatReferenceItems(references) {
+                const host = document.getElementById("chatReferenceItems");
+                if (!host) return;
+                host.replaceChildren();
+                const items = Array.isArray(references) ? references : [];
+                for (const item of items) {
+                    const mediaType = referenceMediaType(item);
+                    const wrapper = document.createElement("div");
+                    wrapper.className = "seedance-reference-item";
+                    wrapper.title = String(item?.name || "参考媒体");
+
+                    if (mediaType === "image") {
+                        const image = document.createElement("img");
+                        image.src = String(item?.dataUrl || "");
+                        image.alt = String(item?.name || "参考图片");
+                        wrapper.appendChild(image);
+                    } else if (mediaType === "video") {
+                        const video = document.createElement("video");
+                        video.src = String(item?.dataUrl || "");
+                        video.controls = true;
+                        video.preload = "metadata";
+                        video.playsInline = true;
+                        wrapper.appendChild(video);
+                    } else if (mediaType === "audio") {
+                        const audio = document.createElement("audio");
+                        audio.src = String(item?.dataUrl || "");
+                        audio.controls = true;
+                        audio.preload = "metadata";
+                        wrapper.appendChild(audio);
+                    }
+
+                    const name = document.createElement("span");
+                    name.className = "seedance-reference-item-name";
+                    name.textContent = String(item?.name || "参考媒体");
+                    const type = document.createElement("span");
+                    type.className = "seedance-reference-item-type";
+                    type.textContent = referenceMediaTypeLabel(mediaType);
+                    name.appendChild(type);
+                    wrapper.appendChild(name);
+
+                    const remove = document.createElement("button");
+                    remove.className = "seedance-reference-item-remove";
+                    remove.type = "button";
+                    remove.textContent = "×";
+                    remove.setAttribute(
+                        "aria-label",
+                        `移除${String(item?.name || "参考媒体")}`,
+                    );
+                    remove.addEventListener("click", (event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const index = chatPendingReferences.indexOf(item);
+                        if (index < 0) return;
+                        chatPendingReferences.splice(index, 1);
+                        renderChatReferenceState();
+                    });
+                    wrapper.appendChild(remove);
+                    host.appendChild(wrapper);
+                }
+                host.hidden = items.length === 0;
+            }
+
             function renderChatReferenceState() {
                 const label = document.getElementById("chatReferenceName");
                 const hint = document.getElementById("chatReferenceHint");
@@ -7618,22 +7850,26 @@
                 const references = Array.isArray(chatPendingReferences)
                     ? chatPendingReferences.filter((item) => item?.dataUrl)
                     : [];
-                const firstReference = references[0] || null;
+                const firstImage = references.find(
+                    (item) => referenceMediaType(item) === "image",
+                );
                 const hasReference = references.length > 0;
-                const isReferenceFull = references.length >= MAX_SEEDANCE_REFERENCE_IMAGES;
+                const isReferenceFull = references.length >= MAX_SEEDANCE_REFERENCE_MEDIA;
                 const requiresReference = currentChatRequiresReferenceImage();
+                const summary = referenceMediaSummary(references);
+                renderChatReferenceItems(references);
                 if (label) {
                     label.innerHTML =
-                        `<span class="label-ntjuL3 seedance-reference-label">参考${references.length > 1 ? ` ${references.length}` : ""}</span>`;
+                        `<span class="label-ntjuL3 seedance-reference-label">参考媒体${references.length > 1 ? ` ${references.length}` : ""}</span>`;
                 }
                 if (hint) {
                     hint.textContent = isReferenceFull
-                        ? `已选 ${references.length} 张，已达上限`
+                        ? `已选 ${references.length} 项，已达上限`
                         : hasReference
-                        ? `已选 ${references.length} 张，最多 ${MAX_SEEDANCE_REFERENCE_IMAGES} 张`
+                        ? `已选 ${references.length} 项；${summary}`
                         : requiresReference
-                        ? "点击或拖入参考图"
-                        : "可选：点击或拖入参考图";
+                        ? "点击或拖入参考图片或视频"
+                        : "可选：点击或拖入参考图片、音频或视频";
                 }
                 if (cta) {
                     cta.textContent = isReferenceFull
@@ -7641,11 +7877,11 @@
                         : hasReference
                         ? "继续添加"
                         : requiresReference
-                        ? "选择参考"
-                        : "添加参考";
+                        ? "选择参考媒体"
+                        : "添加参考媒体";
                 }
                 if (preview) {
-                    const dataUrl = firstReference?.dataUrl || "";
+                    const dataUrl = firstImage?.dataUrl || "";
                     preview.hidden = !dataUrl;
                     if (dataUrl) preview.src = dataUrl;
                     else preview.removeAttribute("src");
@@ -7654,7 +7890,7 @@
                     placeholder.hidden = hasReference;
                 }
                 if (clearBtn) clearBtn.hidden = !hasReference;
-                if (state) state.textContent = hasReference ? `${references.length}/${MAX_SEEDANCE_REFERENCE_IMAGES}` : "";
+                if (state) state.textContent = hasReference ? `${references.length}/${MAX_SEEDANCE_REFERENCE_MEDIA}` : "";
                 if (shell) {
                     shell.classList.toggle("has-file", hasReference);
                     shell.classList.toggle("is-reference-full", isReferenceFull);
@@ -7662,10 +7898,10 @@
                 }
                 if (trigger) {
                     trigger.title = isReferenceFull
-                        ? `最多支持 ${MAX_SEEDANCE_REFERENCE_IMAGES} 张参考图`
+                        ? `最多支持 ${MAX_SEEDANCE_REFERENCE_MEDIA} 项参考媒体`
                         : hasReference
                         ? references.map((item) => item.name).filter(Boolean).join("、") || "已选参考"
-                        : "添加参考";
+                        : "添加参考媒体";
                     trigger.setAttribute("aria-disabled", isReferenceFull ? "true" : "false");
                 }
                 if (heroReference) {
@@ -7687,14 +7923,14 @@
                     : 0;
                 if (shell) shell.classList.toggle("is-dragging", Boolean(active));
                 if (active) {
-                    if (referenceCount >= MAX_SEEDANCE_REFERENCE_IMAGES) {
-                        if (state) state.textContent = `${MAX_SEEDANCE_REFERENCE_IMAGES}/${MAX_SEEDANCE_REFERENCE_IMAGES}`;
-                        if (hint) hint.textContent = `最多支持 ${MAX_SEEDANCE_REFERENCE_IMAGES} 张参考图`;
+                    if (referenceCount >= MAX_SEEDANCE_REFERENCE_MEDIA) {
+                        if (state) state.textContent = `${MAX_SEEDANCE_REFERENCE_MEDIA}/${MAX_SEEDANCE_REFERENCE_MEDIA}`;
+                        if (hint) hint.textContent = `最多支持 ${MAX_SEEDANCE_REFERENCE_MEDIA} 项参考媒体`;
                         if (cta) cta.textContent = "已达上限";
                     } else {
                         if (state) state.textContent = "拖入";
                         if (hint) hint.textContent = "松手上传";
-                        if (cta) cta.textContent = "松手添加参考";
+                        if (cta) cta.textContent = "松手添加参考媒体";
                     }
                     return;
                 }
@@ -9682,10 +9918,97 @@
                 populatePrompt(prompt);
             }
 
+            function referenceMimeTypeForFile(file) {
+                const declared = String(file?.type || "").trim().toLowerCase();
+                if (REFERENCE_MEDIA_MIME_TYPES.has(declared)) return declared;
+                const name = String(file?.name || "").trim().toLowerCase();
+                const dot = name.lastIndexOf(".");
+                const extension = dot >= 0 ? name.slice(dot) : "";
+                return REFERENCE_MEDIA_EXTENSION_MIMES[extension] || "";
+            }
+
+            function referenceMimeTypeFromDataUrl(dataUrl) {
+                const match = String(dataUrl || "").match(/^data:([^;,]+)/i);
+                const mimeType = String(match?.[1] || "").trim().toLowerCase();
+                return REFERENCE_MEDIA_MIME_TYPES.has(mimeType) ? mimeType : "";
+            }
+
+            function referenceMediaTypeForMime(mimeType) {
+                const normalized = String(mimeType || "").trim().toLowerCase();
+                if (normalized.startsWith("image/")) return "image";
+                if (normalized.startsWith("audio/")) return "audio";
+                if (normalized.startsWith("video/")) return "video";
+                return "";
+            }
+
+            async function readReferenceMediaDuration(file, mediaType) {
+                if (mediaType === "image") return null;
+                if (!window.URL?.createObjectURL) {
+                    throw new Error(`${file.name || "媒体文件"} 无法读取时长`);
+                }
+                const objectUrl = window.URL.createObjectURL(file);
+                const element = document.createElement(mediaType === "audio" ? "audio" : "video");
+                element.preload = "metadata";
+                if (mediaType === "video") element.playsInline = true;
+                return new Promise((resolve, reject) => {
+                    let settled = false;
+                    const timer = window.setTimeout(() => {
+                        finish(null, new Error(`${file.name || "媒体文件"} 时长读取超时`));
+                    }, 10000);
+                    const cleanup = () => {
+                        window.clearTimeout(timer);
+                        element.removeAttribute("src");
+                        element.load();
+                        window.URL.revokeObjectURL(objectUrl);
+                    };
+                    const finish = (value, error = null) => {
+                        if (settled) return;
+                        settled = true;
+                        cleanup();
+                        if (error) reject(error);
+                        else resolve(value);
+                    };
+                    element.onloadedmetadata = () => {
+                        const duration = Number(element.duration);
+                        if (!Number.isFinite(duration) || duration <= 0) {
+                            finish(null, new Error(`${file.name || "媒体文件"} 时长无效`));
+                            return;
+                        }
+                        finish(duration);
+                    };
+                    element.onerror = () => {
+                        finish(null, new Error(`${file.name || "媒体文件"} 无法读取，请更换格式`));
+                    };
+                    element.src = objectUrl;
+                    element.load();
+                });
+            }
+
             async function readReferenceFile(file) {
                 if (!file) return null;
-                if (file.type && !String(file.type).startsWith("image/")) {
-                    throw new Error(`${file.name || "文件"} 不是图片格式`);
+                const mimeType = referenceMimeTypeForFile(file);
+                if (!mimeType || !REFERENCE_MEDIA_MIME_TYPES.has(mimeType)) {
+                    throw new Error(`${file.name || "文件"} 格式不支持，仅支持图片、MP3/WAV 音频和 MP4/MOV 视频`);
+                }
+                const mediaType = referenceMediaTypeForMime(mimeType);
+                const sizeBytes = Number(file.size || 0);
+                const maxBytes = REFERENCE_MEDIA_MAX_BYTES[mediaType];
+                if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
+                    throw new Error(`${file.name || "文件"} 文件大小无效`);
+                }
+                if (
+                    (mediaType === "image" && sizeBytes >= maxBytes) ||
+                    (mediaType !== "image" && sizeBytes > maxBytes)
+                ) {
+                    const maxMb = Math.round(maxBytes / 1024 / 1024);
+                    throw new Error(`${file.name || "文件"} 超过${maxMb}MB大小限制`);
+                }
+                const durationSeconds = await readReferenceMediaDuration(file, mediaType);
+                if (
+                    durationSeconds != null &&
+                    (durationSeconds < 2 || durationSeconds > 15)
+                ) {
+                    throw new Error(`${file.name || "媒体文件"} 时长需在 2-15 秒之间`);
                 }
                 const dataUrl = await new Promise((resolve, reject) => {
                     const reader = new FileReader();
@@ -9693,63 +10016,64 @@
                     reader.onerror = () => reject(reader.error);
                     reader.readAsDataURL(file);
                 });
+                const rawDataUrl = String(dataUrl || "");
+                const normalizedDataUrl = rawDataUrl.replace(
+                    /^data:[^;]+;/i,
+                    `data:${mimeType};`,
+                );
                 return {
-                    name: String(file.name || "reference-image"),
-                    dataUrl: String(dataUrl || ""),
+                    name: String(file.name || `reference-${mediaType}`),
+                    dataUrl: normalizedDataUrl,
+                    mimeType,
+                    mediaType,
+                    sizeBytes,
+                    ...(durationSeconds != null ? { durationSeconds } : {}),
                 };
             }
 
             async function addReferencesFromFiles(files) {
                 const list = Array.from(files || []).filter(Boolean);
                 if (!list.length) return;
-                try {
-                    const existing = Array.isArray(chatPendingReferences)
-                        ? chatPendingReferences.filter((item) => item?.dataUrl).slice(0, MAX_SEEDANCE_REFERENCE_IMAGES)
-                        : [];
-                    const seen = new Set(
-                        existing.map((item) => `${item.name}\n${item.dataUrl}`),
-                    );
-                    const merged = [...existing];
-                    let acceptedCount = 0;
-                    let ignoredByLimit = 0;
-                    for (const file of list) {
-                        if (merged.length >= MAX_SEEDANCE_REFERENCE_IMAGES) {
-                            ignoredByLimit += 1;
-                            continue;
-                        }
+                const existing = Array.isArray(chatPendingReferences)
+                    ? chatPendingReferences.filter((item) => item?.dataUrl).slice(0, MAX_SEEDANCE_REFERENCE_MEDIA)
+                    : [];
+                const seen = new Set(
+                    existing.map((item) => `${item.mediaType || ""}\n${item.name}\n${item.dataUrl}`),
+                );
+                const merged = [...existing];
+                const errors = [];
+                let acceptedCount = 0;
+                for (const file of list) {
+                    if (merged.length >= MAX_SEEDANCE_REFERENCE_MEDIA) {
+                        errors.push(`最多支持 ${MAX_SEEDANCE_REFERENCE_MEDIA} 项参考媒体`);
+                        break;
+                    }
+                    try {
                         const item = await readReferenceFile(file);
                         if (!item?.dataUrl) continue;
-                        const key = `${item.name}\n${item.dataUrl}`;
+                        const counts = referenceMediaCounts(merged);
+                        const limit = REFERENCE_MEDIA_LIMITS[item.mediaType];
+                        if (counts[item.mediaType] >= limit) {
+                            errors.push(`${item.name} 已达到${referenceMediaTypeLabel(item.mediaType)} ${limit} 项上限`);
+                            continue;
+                        }
+                        const key = `${item.mediaType}\n${item.name}\n${item.dataUrl}`;
                         if (seen.has(key)) continue;
                         seen.add(key);
                         merged.push(item);
                         acceptedCount += 1;
+                    } catch (err) {
+                        errors.push(err?.message || `${file.name || "文件"} 读取失败`);
                     }
-                    chatPendingReferences = merged;
-                    renderChatReferenceState();
-                    if (acceptedCount > 0) {
-                        const capped = ignoredByLimit > 0 || merged.length >= MAX_SEEDANCE_REFERENCE_IMAGES;
-                        setStatus(
-                            capped ? "warn" : "ok",
-                            capped
-                                ? `已载入 ${acceptedCount} 张参考图，共 ${merged.length}/${MAX_SEEDANCE_REFERENCE_IMAGES} 张；已达上限`
-                                : `已载入 ${acceptedCount} 张参考图，共 ${merged.length}/${MAX_SEEDANCE_REFERENCE_IMAGES} 张`,
-                            { autoHideMs: capped ? 5200 : 2600 },
-                        );
-                    } else if (merged.length >= MAX_SEEDANCE_REFERENCE_IMAGES) {
-                        setStatus("warn", `最多支持 ${MAX_SEEDANCE_REFERENCE_IMAGES} 张参考图，请先移除后再添加。`, {
-                            autoHideMs: 5200,
-                        });
-                    } else {
-                        setStatus("warn", "没有新的参考图可添加。", {
-                            autoHideMs: 3000,
-                        });
-                    }
-                } catch (err) {
-                    setStatus("err", err.message || "读取参考失败", {
-                        autoHideMs: 9000,
-                    });
                 }
+                chatPendingReferences = merged;
+                renderChatReferenceState();
+                const statusText = errors.length
+                    ? `${acceptedCount ? `已载入 ${acceptedCount} 项；` : ""}${errors.slice(0, 2).join("；")}`
+                    : `已载入 ${acceptedCount} 项参考媒体；${referenceMediaSummary(merged)}`;
+                setStatus(errors.length ? "warn" : "ok", statusText, {
+                    autoHideMs: errors.length ? 9000 : 3200,
+                });
             }
 
             async function setReferenceFromAttachment(assetId, name, fallbackDataUrl) {
@@ -9765,15 +10089,21 @@
                     });
                     return;
                 }
+                const mimeType =
+                    referenceMimeTypeFromDataUrl(dataUrl) ||
+                    referenceMimeTypeForFile({ name, type: "" });
                 const nextItem = {
                     name: String(name || "reference-image"),
                     dataUrl,
+                    mediaType: "image",
+                    ...(mimeType ? { mimeType } : {}),
                 };
                 const existing = Array.isArray(chatPendingReferences)
-                    ? chatPendingReferences.filter((item) => item?.dataUrl).slice(0, MAX_SEEDANCE_REFERENCE_IMAGES)
+                    ? chatPendingReferences.filter((item) => item?.dataUrl).slice(0, MAX_SEEDANCE_REFERENCE_MEDIA)
                     : [];
-                if (existing.length >= MAX_SEEDANCE_REFERENCE_IMAGES) {
-                    setStatus("warn", `最多支持 ${MAX_SEEDANCE_REFERENCE_IMAGES} 张参考图，请先移除后再添加。`, {
+                const imageCount = referenceMediaCounts(existing).image;
+                if (imageCount >= MAX_SEEDANCE_REFERENCE_IMAGES) {
+                    setStatus("warn", `最多支持 ${MAX_SEEDANCE_REFERENCE_IMAGES} 张参考图片，请先移除后再添加。`, {
                         autoHideMs: 5200,
                     });
                     return;
@@ -9788,7 +10118,7 @@
                 }
                 chatPendingReferences = [...existing, nextItem];
                 renderChatReferenceState();
-                setStatus("ok", `已添加 ${name || "该图片"} 为参考，共 ${chatPendingReferences.length}/${MAX_SEEDANCE_REFERENCE_IMAGES} 张`, {
+                setStatus("ok", `已添加 ${name || "该图片"} 为参考媒体，共 ${chatPendingReferences.length}/${MAX_SEEDANCE_REFERENCE_MEDIA} 项`, {
                     autoHideMs: 2600,
                 });
             }
@@ -10784,6 +11114,44 @@
                 }
             }
 
+            function validateReferenceSelectionForSettings(references, settings) {
+                const items = Array.isArray(references) ? references : [];
+                const counts = referenceMediaCounts(items);
+                const nonImage = items.some(
+                    (item) => referenceMediaType(item) !== "image",
+                );
+                const channel = String(settings?.channel || "").trim().toLowerCase();
+                const provider = String(settings?.provider || "").trim();
+                if (channel !== "seedance" && nonImage) {
+                    return "当前 Flow 任务只支持参考图片，请移除音频或视频后再提交。";
+                }
+                if (channel === "seedance" && !["2", "3"].includes(provider) && nonImage) {
+                    return "当前 Seedance 服务商暂不支持参考音频或视频，请切换到服务商 2/3。";
+                }
+                if (
+                    channel === "seedance" &&
+                    counts.audio > 0 &&
+                    counts.image === 0 &&
+                    counts.video === 0
+                ) {
+                    return "参考音频不能单独使用，请至少再上传一张参考图片或一个参考视频。";
+                }
+                for (const mediaType of ["image", "audio", "video"]) {
+                    if (counts[mediaType] > REFERENCE_MEDIA_LIMITS[mediaType]) {
+                        return `${referenceMediaTypeLabel(mediaType)}参考素材超过数量上限。`;
+                    }
+                }
+                for (const mediaType of ["audio", "video"]) {
+                    const totalDuration = items
+                        .filter((item) => referenceMediaType(item) === mediaType)
+                        .reduce((sum, item) => sum + Number(item?.durationSeconds || 0), 0);
+                    if (totalDuration > 15) {
+                        return `${referenceMediaTypeLabel(mediaType)}参考素材总时长不能超过 15 秒。`;
+                    }
+                }
+                return "";
+            }
+
             async function sendChatMessage() {
                 if (chatSendInFlight) {
                     setStatus("warn", "任务正在提交，请勿重复点击。", {
@@ -10810,15 +11178,28 @@
                     const selectedReferences = Array.isArray(chatPendingReferences)
                         ? chatPendingReferences.filter((item) => item?.dataUrl)
                         : [];
-                    const referencesForSubmit = selectedReferences.slice(0, MAX_SEEDANCE_REFERENCE_IMAGES);
+                    const referencesForSubmit = selectedReferences.slice(0, MAX_SEEDANCE_REFERENCE_MEDIA);
                     if (selectedReferences.length !== referencesForSubmit.length) {
                         chatPendingReferences = referencesForSubmit;
                         renderChatReferenceState();
                     }
                     const settings = collectChatSettings();
+                    const referenceValidationError = validateReferenceSelectionForSettings(
+                        referencesForSubmit,
+                        settings,
+                    );
+                    if (referenceValidationError) {
+                        setStatus("warn", referenceValidationError, {
+                            autoHideMs: 7000,
+                        });
+                        return;
+                    }
+                    const imageReferences = referencesForSubmit.filter(
+                        (item) => referenceMediaType(item) === "image",
+                    );
                     const channelConfig = getChatChannelConfig(settings.channel);
                     if (
-                        referencesForSubmit.length === 0 &&
+                        imageReferences.length === 0 &&
                         getChannelCatalogStateApi().requiresReferenceImage(
                             channelConfig,
                             settings.provider,
@@ -10832,8 +11213,9 @@
                     const result = await api.sendChatMessage({
                         prompt,
                         settings,
-                        referenceImage: referencesForSubmit[0] || null,
-                        referenceImages: referencesForSubmit,
+                        referenceMedia: referencesForSubmit,
+                        referenceImage: imageReferences[0] || null,
+                        referenceImages: imageReferences,
                     });
                     if (result?.duplicate) {
                         setStatus("warn", result.message || "相同任务已在执行中，未重复提交。", {
@@ -10950,10 +11332,10 @@
                     const count = Array.isArray(chatPendingReferences)
                         ? chatPendingReferences.filter((item) => item?.dataUrl).length
                         : 0;
-                    if (count < MAX_SEEDANCE_REFERENCE_IMAGES) return;
+                    if (count < MAX_SEEDANCE_REFERENCE_MEDIA) return;
                     e.preventDefault();
                     e.stopPropagation();
-                    setStatus("warn", `最多支持 ${MAX_SEEDANCE_REFERENCE_IMAGES} 张参考图，请先移除后再添加。`, {
+                    setStatus("warn", `最多支持 ${MAX_SEEDANCE_REFERENCE_MEDIA} 项参考媒体，请先移除后再添加。`, {
                         autoHideMs: 5200,
                     });
                 });
@@ -10965,8 +11347,8 @@
                     const count = Array.isArray(chatPendingReferences)
                         ? chatPendingReferences.filter((item) => item?.dataUrl).length
                         : 0;
-                    if (count >= MAX_SEEDANCE_REFERENCE_IMAGES) {
-                        setStatus("warn", `最多支持 ${MAX_SEEDANCE_REFERENCE_IMAGES} 张参考图，请先移除后再添加。`, {
+                    if (count >= MAX_SEEDANCE_REFERENCE_MEDIA) {
+                        setStatus("warn", `最多支持 ${MAX_SEEDANCE_REFERENCE_MEDIA} 项参考媒体，请先移除后再添加。`, {
                             autoHideMs: 5200,
                         });
                         return;

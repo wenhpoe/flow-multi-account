@@ -57,16 +57,22 @@ FMA_NO_LOCAL_PROFILES=0 npm start
 
 注意：即使不保存 `profiles/*.json`，Playwright/Chromium 运行时仍会创建临时的浏览器配置目录（用于运行时会话），通常在上下文关闭后自动清理。
 
-## 参考图上传（OSS / S3 / CDN）
+## 参考媒体上传（OSS / S3 / CDN）
 
-聊天生成里“参考图”（reference image）会先写入本地临时文件，然后在登记资源（registerAsset）前按配置上传到对象存储（OSS 或 S3）。
+聊天生成的参考媒体支持图片、音频、视频；同一 Seedance 任务可以混合选择三类媒体。客户端会先在本地校验并读取时长，再写入临时文件，并在登记资源（registerAsset）前按配置上传到对象存储（OSS 或 S3）。
+
+- 图片：最多 9 张，单张小于 30 MB
+- 音频：MP3/WAV，最多 3 段，单段 2–15 秒且不超过 15 MB
+- 视频：MP4/MOV，最多 3 段，单段 2–15 秒且不超过 200 MB
+- 音频可以和图片/视频混合，但不能单独作为 Seedance 参考输入；Flow 任务仍只接受图片
+- `seedance/provider2` 和 `seedance/provider3` 使用统一的 `reference_media` 任务字段；旧 `referenceImages`/`extra_body.images` 仍兼容为图片
 
 ## 渠道与 provider 选择
 
 - 聊天生成仍通过 `GET /v1/client/channels` 拉取可用渠道目录。
 - 当渠道返回多个 provider 时，界面会默认跟随 `channels[].selected_provider`。
 - 如果你手动切换 provider，后续任务提交会显式带上该 `provider`；如果不手动切换，则会继续跟随服务端默认选择。
-- 提交前的参考图校验同样按 `provider` 解析：当前 `seedance/provider1` 仍要求至少 1 张参考图；`seedance/provider2` 支持纯 prompt 文生视频，参考图可选。
+- 提交前的参考媒体校验同样按 `provider` 解析：当前 `seedance/provider1` 仍要求至少 1 张参考图；`seedance/provider2/provider3` 支持纯 prompt 文生视频，参考媒体可选。
 - 如果渠道目录暂时加载失败，客户端现在会禁止提交并提示错误；不会再静默回退成默认 `服务商 1` 误导排查。
 - 设备启动校验会对 `/v1/client/device` 做一次保守重试，降低本地服务刚恢复时误报“校验失败”的概率。
 
@@ -79,8 +85,8 @@ FMA_NO_LOCAL_PROFILES=0 npm start
 
 当 `FLOW_TASK_ASSET_TRANSPORT=oss`（默认）或 `FLOW_TASK_ASSET_TRANSPORT=s3` 时：
 
-- 客户端会把参考图上传到对象存储，并将对外可访问的 URL 写入 `asset.metadata.publicUrl`
-- 下游任务（例如 Seedance）会把这些 URL 作为 `extra_body.images` 传给服务端/模型
+- 客户端会把每项参考媒体上传到对象存储，并将对外可访问的 URL 写入 `asset.metadata.publicUrl`
+- 下游 Seedance 任务会把这些 URL 以 `params.extra_body.reference_media[]` 传给执行端；旧图片任务继续使用 `extra_body.images[]`
 - 如你希望把对外 URL 改为 CDN 域名，只需要配置 `FLOW_ASSET_CDN`（推荐）或 `OSS_CDN` / `S3_CDN`
 
 推荐做法：在启动 `flow-multi-account` 前配置环境变量（或复制 `flow-multi-account/.env.example` 为本机 `.env` 并自行填写）。
